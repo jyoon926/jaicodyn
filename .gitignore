@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ---------------------------------------------------------------------------------------------
 # This repository is public. The full-match ground truth is not.
 #
@@ -56,9 +57,33 @@ organizers/
 # -- editors and build artifacts ---------------------------------------------------------------
 .idea/
 .vscode/
+=======
+# Match data is licensed for the competition only and must never be committed.
+data/*
+!data/.gitkeep
+*.mp4
+*_atd.txt
+*_atd.xml
+*_homography.csv
+*_smart_tagging.xml
+
+# Submission files are complete label sets; upload them through the form only.
+*.csv
+
+# External training datasets are downloaded, not redistributed.
+external/
+
+>>>>>>> 9c0b031ca19941fde8022d026dce7767fdce82c8
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+<<<<<<< HEAD
 env/
 .DS_Store
+=======
+.ipynb_checkpoints/
+.env
+.DS_Store
+Thumbs.db
+>>>>>>> 9c0b031ca19941fde8022d026dce7767fdce82c8
