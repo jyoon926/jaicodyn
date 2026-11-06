@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jaicodyn Viewer</title>
+  <link rel="stylesheet" href="/viewer.css">
+</head>
+<body>
+  <header id="bar">
+    <div class="zone">
+      <span id="brand">Jaicodyn</span>
+      <select id="match" aria-label="Match"></select>
+    </div>
+    <h1 id="title"></h1>
+    <div class="zone end">
+      <span id="status" role="status"></span>
+      <button id="help" class="icon" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+    </div>
+  </header>
+
+  <main id="workspace">
+    <section id="stage">
+      <video id="video" muted playsinline preload="auto"></video>
+      <canvas id="overlay"></canvas>
+    </section>
+    <aside id="inspector">
+      <canvas id="mini"></canvas>
+      <div id="info"></div>
+      <section class="panel">
+        <h2>Layers</h2>
+        <div id="layers"></div>
+      </section>
+    </aside>
+  </main>
+
+  <section id="transport">
+    <div class="zone">
+      <div id="time">
+        <output id="timecode">00:00:00:00</output>
+        <div id="subtime">
+          <span id="period"></span>
+          <label>Frame <input id="goto" type="number" min="0" step="1" aria-label="Go to frame"></label>
+        </div>
+      </div>
+    </div>
+
+    <div id="controls">
+      <button id="previousPossession" class="icon" title="Previous possession ([)" aria-label="Previous possession">
+        <svg viewBox="0 0 20 20"><path d="M4 4h2v12H4zM16 4v12L7 10z"/></svg>
+      </button>
+      <button id="stepBack" class="icon" title="Back one frame (Left)" aria-label="Back one frame">
+        <svg viewBox="0 0 20 20"><path d="M6 4h2v12H6zM15 4v12l-6-6z"/></svg>
+      </button>
+      <button id="play" title="Play or pause (Space)" aria-label="Play or pause">
+        <svg class="when-paused" viewBox="0 0 20 20"><path d="M6 3.5v13l10.5-6.500z"/></svg>
+        <svg class="when-playing" viewBox="0 0 20 20"><path d="M5.500 4h3.200v12H5.500zM11.300 4h3.200v12h-3.200z"/></svg>
+      </button>
+      <button id="stepForward" class="icon" title="Forward one frame (Right)" aria-label="Forward one frame">
+        <svg viewBox="0 0 20 20"><path d="M12 4h2v12h-2zM5 4v12l6-6z"/></svg>
+      </button>
+      <button id="nextPossession" class="icon" title="Next possession (])" aria-label="Next possession">
+        <svg viewBox="0 0 20 20"><path d="M14 4h2v12h-2zM4 4v12l9-6z"/></svg>
+      </button>
+    </div>
+
+    <div class="zone end">
+      <div id="view" class="segmented" role="group" aria-label="View">
+        <button id="viewVideo">Video</button>
+        <button id="viewPitch">Pitch</button>
+      </div>
+      <select id="rate" aria-label="Playback speed" title="Speed (- and =)">
+        <option value="0.1">0.1×</option>
+        <option value="0.25">0.25×</option>
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+      </select>
+    </div>
+  </section>
+
+  <footer id="timeline">
+    <canvas id="detail"></canvas>
+    <canvas id="overview"></canvas>
+    <div id="tip" hidden></div>
+  </footer>
+
+  <dialog id="shortcuts" aria-labelledby="shortcutsTitle">
+    <h2 id="shortcutsTitle">Keyboard shortcuts</h2>
+    <dl>
+      <dt><kbd>Space</kbd></dt><dd>Play or pause</dd>
+      <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>One frame</dd>
+      <dt><kbd>Shift</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>One second</dd>
+      <dt><kbd>Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>Ten seconds</dd>
+      <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Previous or next possession</dd>
+      <dt><kbd>-</kbd> <kbd>=</kbd></dt><dd>Slower or faster</dd>
+      <dt><kbd>V</kbd></dt><dd>Swap video and pitch</dd>
+      <dt>Scroll</dt><dd>Zoom the timeline at the cursor</dd>
+      <dt>Horizontal scroll</dt><dd>Pan the timeline</dd>
+      <dt>Click a player</dt><dd>Follow them</dd>
+    </dl>
+    <form method="dialog"><button>Done</button></form>
+  </dialog>
+
+  <script src="/viewer.js"></script>
+</body>
+</html>

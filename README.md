@@ -13,6 +13,8 @@ python -m scripts.prepare_data
 python -m pytest
 ```
 
+To watch a match with its tracking overlaid, run `python -m scripts.viewer`. See [docs/viewer.md](docs/viewer.md).
+
 ## Layout
 
 ```
@@ -20,7 +22,7 @@ challenge/   the official repository, as a submodule
 config/      dataset lockfile, splits
 data/        all data (gitignored)
 docs/        our docs
-jaicodyn/    our package
+jaicodyn/    our package: data and viz
 scripts/     command-line entry points
 tests/       unit tests
 ```

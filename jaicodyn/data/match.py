@@ -42,6 +42,27 @@ class Match:
         """One row per team spell: start and stop frames, team, period."""
         return spells(self.frames)
 
+    @cached_property
+    def video(self):
+        """Path to the video, or None."""
+        return self._asset("video")
+
+    @cached_property
+    def homography(self):
+        """3x3 pitch-to-pixel matrices indexed by frame, or None."""
+        return self._asset("homography")
+
+    @cached_property
+    def tags(self):
+        """Tagged phases as start, stop, code, team and type, or None."""
+        return self._asset("tags")
+
+    def _asset(self, name):
+        from .sources import SOURCES  # here, so external matches need no submodule
+
+        reader = getattr(SOURCES.get(self.source), name, None)
+        return reader(self.id) if reader else None
+
 
 def load(key):
     """Load a match by key, such as "idsse/J03WMX"."""

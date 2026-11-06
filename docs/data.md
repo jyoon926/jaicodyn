@@ -9,6 +9,7 @@ match = load("idsse/J03WMX")
 match.frames        # frame, period, ball_x, ball_y, label
 match.players       # frame, team, track_id, x, y
 match.possessions   # start, stop, team, period
+match.video, match.homography, match.tags   # competition only, else None
 match.fps, match.pitch, match.home, match.away
 
 for match in split("train"):

@@ -1,16 +1,20 @@
 """The competition match. Frames are video frames, within the graded halves; labels are X."""
 
 import os
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from challenge.games import GAME, GAMES, asset_paths, half_of_video_frame
+from challenge.starter import load_homography, load_smart_tagging
 from challenge.starter.baseline import team_names, team_of_each_track
 
 from .. import paths
 from ..schema import Tracking, frames_table, players_table
 
 MATCHES = [GAME]
+TAG_TEAMS = {"Barcelona": "H", "Atletic Club": "A"}
 
 
 def _files(match_id):
@@ -20,6 +24,26 @@ def _files(match_id):
 def is_ready(match_id):
     files = _files(match_id)
     return os.path.exists(files["atd_meta"]) and os.path.exists(files["atd_raw"])
+
+
+def video(match_id):
+    path = Path(_files(match_id)["video"])
+    return path if path.exists() else None
+
+
+def homography(match_id):
+    if not Path(_files(match_id)["homography"]).exists():
+        return None
+    return load_homography.load(match_id, str(paths.COMPETITION))[0]
+
+
+def tags(match_id):
+    if not Path(_files(match_id)["smart_tagging"]).exists():
+        return None
+    return pd.DataFrame([
+        {"start": event["start_frame"], "stop": event["end_frame"], "code": event["code"],
+         "team": TAG_TEAMS.get(event["tags"].get("Team"), ""), "type": event["tags"].get("Type", "")}
+        for event in load_smart_tagging.load(match_id, str(paths.COMPETITION))])
 
 
 def _xy(group):
