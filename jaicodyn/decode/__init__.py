@@ -22,6 +22,10 @@ Evidence per frame (features from jaicodyn.features; per second, divided by fps 
 With no ball position the team scores are 0, so possession holds through gaps unless the
 dead-ball cues say play has stopped.
 
+Inside long gaps, `gap_probs` from the gap classifier (gaps.py) add to these scores when given:
+    score s += GAP_W * (log P(s) - mean log P), per second.
+Adding rather than replacing keeps the hold-through-gaps behaviour and the dead-ball cues.
+
 `posterior` gives each frame's probability of H, A and D under the same scores and costs.
 
 The constants are set from what they mean, not fitted to the provided game's labels (RULES.md).
@@ -47,11 +51,12 @@ class Params:
     turnover_s: float = 1.0      # cost of H <-> A
     stop_s: float = 1.0          # cost of H/A -> D
     restart_s: float = 1.0       # cost of D -> H/A
+    gap_w: float = 1.0           # evidence per second from the gap classifier's log-odds
     nats_per_s: float = 4.0      # posterior only: log-odds per second of evidence (calibrate)
     dead: DeadParams = DeadParams()
 
 
-def emissions(feats, fps, pitch, tags=None, p=Params()):
+def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None):
     """[n, 3] per-frame scores for H, A, D."""
     near_h = feats["near_H"].to_numpy(float)
     near_a = feats["near_A"].to_numpy(float)
@@ -69,6 +74,10 @@ def emissions(feats, fps, pitch, tags=None, p=Params()):
     score[:, H] = gate * (p.live_w + who / 2)
     score[:, A] = gate * (p.live_w - who / 2)
     score[:, D] = cues(feats, fps, pitch, tags, p.dead)["dead"].to_numpy()
+    if gap_probs is not None:
+        rows = ~np.isnan(gap_probs[:, 0])
+        logp = np.log(np.clip(gap_probs[rows], 1e-3, 1))
+        score[rows] += p.gap_w * (logp - logp.mean(axis=1, keepdims=True))
     return score / fps
 
 
@@ -121,9 +130,9 @@ def _periods(feats):
     return zip(np.r_[0, cuts], np.r_[cuts, len(feats)])
 
 
-def decode(feats, fps, pitch, tags=None, p=Params()):
+def decode(feats, fps, pitch, tags=None, p=Params(), gap_probs=None):
     """H/A/D label per row of a features table, each period decoded on its own."""
-    score = emissions(feats, fps, pitch, tags, p)
+    score = emissions(feats, fps, pitch, tags, p, gap_probs)
     cost = switch_costs(p)
     out = np.empty(len(feats), dtype=np.int8)
     for a, b in _periods(feats):
@@ -131,13 +140,13 @@ def decode(feats, fps, pitch, tags=None, p=Params()):
     return STATES[out]
 
 
-def posterior(feats, fps, pitch, tags=None, p=Params()):
+def posterior(feats, fps, pitch, tags=None, p=Params(), gap_probs=None):
     """[n, 3] probability of H, A, D per row, each period on its own.
 
     Scores and costs are scaled by nats_per_s to read as log-odds. That scaling leaves the
     Viterbi path unchanged; it only sets how confident the probabilities are.
     """
-    score = emissions(feats, fps, pitch, tags, p) * p.nats_per_s
+    score = emissions(feats, fps, pitch, tags, p, gap_probs) * p.nats_per_s
     cost = switch_costs(p) * p.nats_per_s
     out = np.empty((len(feats), 3))
     for a, b in _periods(feats):
