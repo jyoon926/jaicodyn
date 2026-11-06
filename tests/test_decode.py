@@ -8,8 +8,9 @@ FPS, PITCH = 25, (100.0, 50.0)
 
 def feats(near_h, near_a, ball_x=50.0, period=None):
     n = len(near_h)
-    return pd.DataFrame({"period": period or [1] * n, "ball_x": np.broadcast_to(ball_x, n),
-                         "ball_y": np.full(n, 25.0), "near_H": near_h, "near_A": near_a})
+    return pd.DataFrame({"frame": np.arange(n), "period": period or [1] * n,
+                         "ball_x": np.broadcast_to(ball_x, n), "ball_y": np.full(n, 25.0),
+                         "near_H": near_h, "near_A": near_a, "speed_med": np.full(n, 2.0)})
 
 
 def test_viterbi_pays_switch_cost_only_for_enough_evidence():
@@ -39,9 +40,29 @@ def test_sustained_control_flips_and_gap_holds():
 
 def test_ball_off_pitch_is_dead():
     n = 150
-    x = np.r_[np.full(50, 50.0), np.full(50, -5.0), np.full(50, 50.0)]
+    rolling = 50 + np.arange(50) * 0.08   # 2 m/s, a ball in play
+    x = np.r_[rolling, np.full(50, -5.0), rolling]
     out = decode(feats(np.full(n, 0.5), np.full(n, 3.0), x), FPS, PITCH)
     assert out[75] == "D" and out[0] == "H" and out[-1] == "H"
+
+
+def test_still_ball_with_walking_players_is_dead():
+    n = 500
+    f = feats(np.full(n, 0.5), np.full(n, 3.0))
+    f["speed_med"] = np.r_[np.full(250, 3.0), np.full(250, 0.5)]   # median over match 1.75
+    f["ball_x"] = np.r_[50 + np.arange(250) * 0.08, np.full(250, 70.0)]
+    out = decode(f, FPS, PITCH)
+    assert out[100] == "H" and out[-50] == "D"
+
+
+def test_posterior_is_a_distribution_and_agrees():
+    from jaicodyn.decode import posterior
+    near_h = np.r_[np.full(100, 0.5), np.full(100, 3.0)]
+    near_a = np.r_[np.full(100, 3.0), np.full(100, 0.5)]
+    f = feats(near_h, near_a, 50 + np.arange(200) * 0.08)
+    post = posterior(f, FPS, PITCH)
+    assert np.allclose(post.sum(axis=1), 1)
+    assert post[20, H] > 0.5 and post[180, A] > 0.5
 
 
 def test_periods_decoded_separately():
@@ -49,5 +70,5 @@ def test_periods_decoded_separately():
     near_h = np.r_[np.full(n, 0.5), np.full(n, 3.0)]
     near_a = np.r_[np.full(n, 3.0), np.full(n, 0.5)]
     out = decode(feats(near_h, near_a, period=[1] * n + [2] * n), FPS,
-                 PITCH, Params(turnover_s=100))
+                 PITCH, p=Params(turnover_s=100))
     assert out[0] == "H" and out[-1] == "A"

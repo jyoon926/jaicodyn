@@ -7,6 +7,7 @@ from .ball import clean_ball
 from .team import team_features
 
 FEATURES = paths.DATA / "features"
+REQUIRED = {"ball_x", "ball_y", "near_H", "near_A", "speed_med"}  # add new columns here
 
 
 def feature_path(match):
@@ -17,7 +18,9 @@ def build(match, force=False):
     """Team features for a match, cached under data/features/."""
     path = feature_path(match)
     if path.exists() and not force:
-        return pd.read_parquet(path)
+        table = pd.read_parquet(path)
+        if REQUIRED <= set(table.columns):
+            return table  # otherwise built by an older version: rebuild
     table = team_features(match)
     path.parent.mkdir(parents=True, exist_ok=True)
     table.to_parquet(path, index=False, compression="zstd")

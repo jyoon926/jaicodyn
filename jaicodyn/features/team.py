@@ -8,6 +8,7 @@ within DEDUP_M of a kept track are merged into it, position averaged -- and then
     near_{t}     metres from the ball to the team's nearest player
     cnt{r}_{t}   players within r metres of the ball, for r in RADII
     cx_{t}, cy_{t}  team centroid in metres
+    speed_med    median speed of all tracked players, m/s
 
 t is H or A. Ball-relative columns are NaN where the ball is unknown.
 """
@@ -20,6 +21,7 @@ import pandas as pd
 from .ball import clean_ball
 
 DEDUP_M = 1.0
+MAX_PLAYER_SPEED = 12.0  # m/s; above any sprint
 RADII = (2, 5, 10)
 TEAMS = ("H", "A")
 
@@ -81,6 +83,24 @@ def ball_relative(pos, ball, radii=RADII):
     return near, counts
 
 
+def median_player_speed(players, frame_index, fps, pitch, v_max=MAX_PLAYER_SPEED):
+    """Median speed (m/s) over all players visible in consecutive frames on the same track.
+
+    Steps faster than v_max are ID switches, not running, and are dropped. Medians over all
+    players are immune to a few bad tracks.
+    """
+    length, width = pitch
+    p = players[players["x"].notna()].sort_values(["team", "track_id", "frame"])
+    frame = p["frame"].to_numpy()
+    x, y = p["x"].to_numpy(float) * length, p["y"].to_numpy(float) * width
+    same = ((np.diff(frame) == 1) & (p["track_id"].to_numpy()[1:] == p["track_id"].to_numpy()[:-1])
+            & (p["team"].to_numpy()[1:] == p["team"].to_numpy()[:-1]))
+    v = np.hypot(np.diff(x), np.diff(y)) * fps
+    keep = same & (v <= v_max)
+    med = pd.Series(v[keep]).groupby(frame[1:][keep]).median()
+    return med.reindex(frame_index).to_numpy(float)
+
+
 def team_features(match, radii=RADII, dedup_m=DEDUP_M):
     """One row per frame of `match.frames`: ball, its source, and the team features."""
     frames = match.frames.sort_values("frame", ignore_index=True)
@@ -99,6 +119,7 @@ def team_features(match, radii=RADII, dedup_m=DEDUP_M):
             warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN frames give NaN
             out["cx_" + t] = np.nanmean(pos[:, :, 0], axis=1)
             out["cy_" + t] = np.nanmean(pos[:, :, 1], axis=1)
+    out["speed_med"] = median_player_speed(match.players, index, match.fps, match.pitch)
     table = pd.DataFrame(out)
     float_cols = [c for c in table.columns if table[c].dtype == np.float64]
     table[float_cols] = table[float_cols].astype(np.float32)

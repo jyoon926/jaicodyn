@@ -4,6 +4,7 @@
     python -m scripts.decode BAR-ATH --public           # ... and checks it on the public window
     python -m scripts.decode idsse/J03WMX               # a labelled game: scores it
     python -m scripts.decode --all-labelled             # every labelled processed game
+    python -m scripts.decode BAR-ATH --probs            # also save P(H), P(A), P(D) per frame
 
 The public window is a pipeline check -- frames aligned, labels meaning what we think -- never a
 tuning signal (challenge/RULES.md). Tune on the other labelled games.
@@ -18,7 +19,7 @@ import pandas as pd
 from challenge.evaluation import possession_metrics as pm
 from challenge.games import GAMES
 from jaicodyn.data import available, load, paths
-from jaicodyn.decode import decode
+from jaicodyn.decode import decode, posterior
 from jaicodyn.features import build
 from scripts.build_features import resolve
 
@@ -28,7 +29,19 @@ SUBMISSION = paths.ROOT / "jaicodyn.csv"
 
 def predict(match):
     feats = build(match)
-    return feats["frame"].to_numpy(), decode(feats, match.fps, match.pitch)
+    return feats["frame"].to_numpy(), decode(feats, match.fps, match.pitch, match.tags)
+
+
+def save_probs(match):
+    """P(H), P(A), P(D) per frame, next to the features. Returns the path."""
+    feats = build(match)
+    post = posterior(feats, match.fps, match.pitch, match.tags)
+    path = paths.DATA / "decoded" / match.source / "{}_probs.parquet".format(match.id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"frame": feats["frame"], "p_H": post[:, 0], "p_A": post[:, 1],
+                  "p_D": post[:, 2]}).astype({"p_H": "float32", "p_A": "float32",
+                                              "p_D": "float32"}).to_parquet(path, index=False)
+    return path
 
 
 def submission(match, frame, labels):
@@ -81,6 +94,7 @@ def main():
     parser.add_argument("--all-labelled", action="store_true", help="every labelled game")
     parser.add_argument("--public", action="store_true", help="check BAR-ATH on the public window")
     parser.add_argument("--out", default=str(SUBMISSION), help="submission path")
+    parser.add_argument("--probs", action="store_true", help="save per-frame state probabilities")
     args = parser.parse_args()
 
     matches = [load(resolve(name)) for name in args.matches]
@@ -91,6 +105,8 @@ def main():
 
     results = []
     for match in matches:
+        if args.probs:
+            print("{}: probabilities in {}".format(match.key, save_probs(match)))
         if match.source == "competition":
             competition(match, args.public, args.out)
             continue
