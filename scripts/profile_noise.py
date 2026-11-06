@@ -1,6 +1,7 @@
 """measure how noisy the automatic tracking is, before modelling anything.
 
-    python src/profile_noise.py            # first run parses the ATD (~1-2 min) and caches it
+    python -m scripts.profile_noise > reports/noise_report.txt
+    # first run parses the ATD (~1-2 min) and caches it
 
 Everything is measured on graded frames only, per half, so nothing straddles halftime.
 The public-window section uses the 5-minute GT to *understand* where gaps fall -- never to set
@@ -10,30 +11,32 @@ The parsed arrays are cached under data/derived/ (gitignored with the rest of da
 """
 
 import os
-import sys
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "starter"))
-from games import GAME, GAMES, DATA_DIR, require, source_frames, half_video_blocks  # noqa: E402
-from baseline import team_of_each_track  # noqa: E402
+from jaicodyn.data import paths
+
+os.environ.setdefault("MTAH_DATA_DIR", str(paths.COMPETITION))  # before challenge.games reads it
+from challenge.games import (GAME, GAMES, half_video_blocks, require,  # noqa: E402
+                             source_frames)
+from challenge.starter.baseline import team_of_each_track  # noqa: E402
+
+DERIVED = paths.COMPETITION / "derived"  # where earlier runs left the parsed ATD cache
 
 FPS = GAMES[GAME]["fps"]
 LENGTH, WIDTH = GAMES[GAME]["pitch"]
 N_SLOTS = 46
 N_COLS = N_SLOTS * 3 + 3
 GAP_BUCKETS = [(1, 1), (2, 5), (6, 25), (26, 125), (126, 10 ** 9)]
-GT_PUBLIC = os.path.join(ROOT, "evaluation", "gt", "BAR-ATH_possession_gt_public.csv")
+GT_PUBLIC = os.path.join(paths.ROOT, "challenge", "evaluation", "gt",
+                         "BAR-ATH_possession_gt_public.csv")
 
 
 # ---------------------------------------------------------------- loading
 
 def load_atd(raw_path, n_frames):
     """(players [n,46,3], ball [n,3]) float32, positions in metres, NaN where missing."""
-    cache = os.path.join(DATA_DIR, "derived", "atd_tactical.npy")
+    cache = os.path.join(DERIVED, "atd_tactical.npy")
     if os.path.isfile(cache):
         data = np.load(cache)
     else:

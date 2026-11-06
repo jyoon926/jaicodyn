@@ -27,8 +27,12 @@ def is_ready(match_id):
 
 
 def video(match_id):
+    """The tactical video. Also accepts a download suffix, as in BAR-ATH_tactical-001.mp4."""
     path = Path(_files(match_id)["video"])
-    return path if path.exists() else None
+    if path.exists():
+        return path
+    matches = sorted(path.parent.glob(path.stem + "*" + path.suffix))
+    return matches[0] if matches else None
 
 
 def homography(match_id):

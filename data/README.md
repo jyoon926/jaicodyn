@@ -9,4 +9,6 @@ data/
   processed/     every match, in one schema
 ```
 
-Official starter tools need `MTAH_DATA_DIR=data/competition`.
+If the challenge bundle lives elsewhere, set `MTAH_DATA_DIR` to the folder holding `tactical/` and
+`broadcast/`. Our code and the official starter tools both read it; unset, both use
+`data/competition/`.

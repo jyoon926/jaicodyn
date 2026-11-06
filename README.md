@@ -22,7 +22,8 @@ challenge/   the official repository, as a submodule
 config/      dataset lockfile, splits
 data/        all data (gitignored)
 docs/        our docs
-jaicodyn/    our package: data and viz
+jaicodyn/    our package: data, features, viz
+reports/     generated reports: tracking noise profile, baseline scores
 scripts/     command-line entry points
 tests/       unit tests
 ```
