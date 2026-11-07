@@ -93,3 +93,20 @@ def test_competition_format(tmp_path, monkeypatch):
     assert np.isnan(tracking.frames["ball_x"][0])
     assert tracking.players["track_id"].tolist() == ["1", "2", "1"]
     assert sorted(tracking.players["team"]) == ["A", "H", "H"]
+
+
+@pytest.mark.parametrize("before, minimum, after", [
+    ("HHHHAHHHH", 2, "HHHHHHHHH"),     # a touch inside a possession
+    ("HHHHADDHH", 2, "HHHHHDDHH"),     # a touch just before the ball goes out
+    ("DDAHHHH", 2, "DDAHHHH"),         # a short spell after a restart is a clear possessor
+    ("HHHAAHHH", 2, "HHHAAHHH"),       # long enough: a real change of possession
+    ("HHHAHAHAAAA", 2, "HHHHHHHAAAA"), # contested: stays with H until A has control
+])
+def test_fold_uncontrolled(before, minimum, after):
+    from jaicodyn.data.labels import fold_uncontrolled
+    assert "".join(fold_uncontrolled(table(before), minimum)) == after
+
+
+def test_fold_uncontrolled_resets_at_period_start():
+    from jaicodyn.data.labels import fold_uncontrolled
+    assert "".join(fold_uncontrolled(table("HHHAHH", [1, 1, 1, 2, 2, 2]), 2)) == "HHHAHH"

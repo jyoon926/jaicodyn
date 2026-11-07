@@ -22,6 +22,7 @@ import pandas as pd
 from challenge.evaluation import possession_metrics as pm
 from challenge.games import GAMES
 from jaicodyn.data import available, load, paths
+from jaicodyn.data.labels import target_labels
 from jaicodyn.data.match import is_built
 from jaicodyn.decode import decode, posterior
 from jaicodyn.features import build
@@ -67,7 +68,7 @@ def score(gt_labels, pred_labels):
 
 
 def show(key, r):
-    print("{:<24} spellF1 {:.3f}  macroF1 {:.3f}  possessions {:>4} (gt {:>4})  "
+    print("{:<36} spellF1 {:.3f}  macroF1 {:.3f}  possessions {:>4} (gt {:>4})  "
           "mean {:5.1f}s (gt {:5.1f}s)  f1 H/A/D {:.2f}/{:.2f}/{:.2f}".format(
               key, r["spell_f1_mean"], r["macro_f1"], r["n_pred_spells"], r["n_gt_spells"],
               r["mean_spell_duration_s"], r["gt_mean_spell_duration_s"],
@@ -113,7 +114,7 @@ def main():
     if not matches:
         parser.error("give a match, --split, or --all-labelled")
 
-    results = []
+    results = {}
     for match in matches:
         if args.probs:
             print("{}: probabilities in {}".format(match.key, save_probs(match)))
@@ -121,13 +122,17 @@ def main():
             competition(match, args.public, args.out)
             continue
         frame, labels = predict(match)
-        r = score(match.frames.sort_values("frame")["label"], labels)
-        show(match.key, r)
-        results.append(r)
-    if len(results) > 1:
-        print("\nmean over {} games: spellF1 {:.3f}  macroF1 {:.3f}".format(
-            len(results), np.mean([r["spell_f1_mean"] for r in results]),
-            np.mean([r["macro_f1"] for r in results])))
+        for scheme in ("strict", "raw"):
+            if scheme == "raw" and not match.source.startswith("idsse"):
+                continue  # only idsse is relabelled; elsewhere raw is strict
+            r = score(target_labels(match, scheme), labels)
+            show("{} [{}]".format(match.key, scheme), r)
+            results.setdefault(scheme, []).append(r)
+    for scheme, rs in results.items():
+        if len(rs) > 1:
+            print("\nmean over {} games, {} labels: spellF1 {:.3f}  macroF1 {:.3f}".format(
+                len(rs), scheme, np.mean([r["spell_f1_mean"] for r in rs]),
+                np.mean([r["macro_f1"] for r in rs])))
 
 
 if __name__ == "__main__":
