@@ -95,7 +95,8 @@ def cues(feats, fps, pitch, tags=None, p=DeadParams()):
     off = off_pitch(feats, pitch, p.off_margin_m)
     speed = feats["speed_med"].to_numpy(float)
     ratio = _rolling(speed, n_smooth) / np.nanmedian(speed)
-    slow = np.clip(-np.log(ratio) / np.log(p.slow_ratio), -1, 2)
+    with np.errstate(divide="ignore", invalid="ignore"):  # everyone still: ratio 0, clipped
+        slow = np.clip(-np.log(ratio) / np.log(p.slow_ratio), -1, 2)
     gap = np.clip((gap_seconds(feats, fps) - p.gap_from_s) / (p.gap_full_s - p.gap_from_s), 0, 1)
 
     out = pd.DataFrame({

@@ -2,8 +2,8 @@
 
 Everything is in seconds of evidence. Each frame contributes a score per state, at most about one
 second's worth per second of play, and a switch between states costs a fixed number of seconds of
-evidence, one cost per kind of switch. So "TURNOVER_S = 1.0" reads: the other team must be clearly
-nearest the ball for about a second before possession changes hands -- the challenge's
+evidence, one cost per kind of switch. So "TURNOVER_S = 0.5" reads: the other team must be clearly
+nearest the ball for about half a second before possession changes hands -- the challenge's
 "controlled possession" (a player keeps the ball, rather than a touch or deflection). Contested
 and loose balls give little evidence either way, so possession stays with the last team, as the
 rules ask.
@@ -48,7 +48,7 @@ class Params:
     gate_near_m: float = 1.5     # someone this close to the ball: full evidence
     gate_far_m: float = 4.0      # nobody this close: no evidence
     live_w: float = 0.25         # evidence per second that play is live, player at ball
-    turnover_s: float = 1.0      # cost of H <-> A
+    turnover_s: float = 0.5      # cost of H <-> A; chosen on the train split (scripts/tune.py)
     stop_s: float = 1.0          # cost of H/A -> D
     restart_s: float = 1.0       # cost of D -> H/A
     gap_w: float = 1.0           # evidence per second from the gap classifier's log-odds
