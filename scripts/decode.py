@@ -3,14 +3,17 @@
     python -m scripts.decode BAR-ATH                    # writes jaicodyn.csv, the submission
     python -m scripts.decode BAR-ATH --public           # ... and checks it on the public window
     python -m scripts.decode idsse/J03WMX               # a labelled game: scores it
-    python -m scripts.decode --all-labelled             # every labelled processed game
+    python -m scripts.decode --split train validation   # labelled games in those splits
+    python -m scripts.decode --all-labelled             # every labelled processed game, test too
     python -m scripts.decode BAR-ATH --probs            # also save P(H), P(A), P(D) per frame
 
 The public window is a pipeline check -- frames aligned, labels meaning what we think -- never a
-tuning signal (challenge/RULES.md). Tune on the other labelled games.
+tuning signal (challenge/RULES.md). Tune on the other labelled games, using train and
+validation only: config/splits.json keeps test for one run after everything is frozen.
 """
 
 import argparse
+import json
 import sys
 
 import numpy as np
@@ -19,6 +22,7 @@ import pandas as pd
 from challenge.evaluation import possession_metrics as pm
 from challenge.games import GAMES
 from jaicodyn.data import available, load, paths
+from jaicodyn.data.match import is_built
 from jaicodyn.decode import decode, posterior
 from jaicodyn.features import build
 from scripts.build_features import resolve
@@ -91,6 +95,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("matches", nargs="*", help="match ids or source/id")
+    parser.add_argument("--split", nargs="+", choices=["train", "validation", "test"],
+                        help="labelled games in these splits that are processed")
     parser.add_argument("--all-labelled", action="store_true", help="every labelled game")
     parser.add_argument("--public", action="store_true", help="check BAR-ATH on the public window")
     parser.add_argument("--out", default=str(SUBMISSION), help="submission path")
@@ -100,8 +106,12 @@ def main():
     matches = [load(resolve(name)) for name in args.matches]
     if args.all_labelled:
         matches += [m for m in available() if m.source != "competition"]
+    for name in args.split or []:
+        table = json.loads(paths.SPLITS.read_text("utf-8"))["splits"][name]
+        matches += [load("{}/{}".format(s, i)) for s, ids in table.items() for i in ids
+                    if is_built(s, i)]
     if not matches:
-        parser.error("give a match, or --all-labelled")
+        parser.error("give a match, --split, or --all-labelled")
 
     results = []
     for match in matches:
