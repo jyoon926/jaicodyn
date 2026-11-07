@@ -2,6 +2,7 @@
 
     python -m scripts.tune                                   # the default grid
     python -m scripts.tune --turnover 0.25 0.5 1 --stop 0.5 1 --restart 0.5 1
+    python -m scripts.tune --sources idsse skillcorner       # tune on clean idsse instead
 
 Choose on train, read validation, never touch test (config/splits.json). Sources label possession
 differently -- idsse's DFL flag flips far more often than SkillCorner's phases -- so the mean
@@ -23,9 +24,10 @@ from jaicodyn.features import build
 from scripts.decode import score
 
 
-def games(split):
+def games(split, sources):
     table = json.loads(paths.SPLITS.read_text("utf-8"))["splits"][split]
-    return [load("{}/{}".format(s, i)) for s, ids in table.items() for i in ids if is_built(s, i)]
+    return [load("{}/{}".format(s, i)) for s, ids in table.items() if s in sources
+            for i in ids if is_built(s, i)]
 
 
 def evaluate(matches, cache, params):
@@ -54,12 +56,15 @@ def line(label, f1, ratio):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--sources", nargs="+", default=["idsse_degraded", "skillcorner"],
+                        help="sources to tune on; clean idsse never loses the ball, so the "
+                             "default uses its degraded copy")
     parser.add_argument("--turnover", type=float, nargs="+", default=[0.25, 0.5, 0.75, 1.0])
     parser.add_argument("--stop", type=float, nargs="+", default=[0.5, 1.0])
     parser.add_argument("--restart", type=float, nargs="+", default=[0.5, 1.0])
     args = parser.parse_args()
 
-    train, val = games("train"), games("validation")
+    train, val = games("train", args.sources), games("validation", args.sources)
     cache = {}
     for m in train + val:
         cache[m.key] = (build(m), m.frames.sort_values("frame")["label"].to_numpy())
