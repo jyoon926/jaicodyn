@@ -6,17 +6,23 @@ weights to conditions the test match does not have, so this hides the ball to ma
 
     missing        share of graded frames hidden: the competition match's, from its tracking alone
     gap_lengths_s  gap lengths, drawn from the competition match's own gaps of 5 s or more
-    dead_ratio     how many times likelier a dead frame is hidden than a live one, measured on the
-                   SkillCorner train games, which have real gaps and labels
+    dead_ratio     how many times likelier a dead frame is hidden than a live one, in the
+                   competition match: estimated from its player speeds (with P(dead | speed)
+                   from idsse train labels) and checked against its automatic set-piece tags
+    line_weights   how much likelier a gap starts with the ball near or beyond a line: the ball
+                   leaving the competition's wide shot. Applied as line_weights_applied, the
+                   weights that reproduce this pattern on the idsse train games (placing gaps over
+                   idsse's own stoppages already puts many starts at the lines)
 
-All three are measured by `python -m scripts.degrade --measure` into config/degrade.json.
+All are measured by `python -m scripts.degrade --measure` into config/degrade.json. No
+competition labels are used. SkillCorner's own ratio (11x) is not: its TV feed cuts to replays
+during stoppages, a different reason for losing the ball.
 
-No competition labels are used. Each gap is centred on a frame drawn from the dead or the live
-frames, whichever is further below its target. A gap over a stoppage is cut to the stoppage plus
-at most SPILL_S of play on each side, as when the camera loses the ball just before it goes out
-and finds it just after the restart; without the cut, long gaps spill far into play and the
-dead/live ratio comes out at 3-4x instead of the measured one. The seed comes from the match id,
-so the output is the same every run.
+Each gap is centred on a frame drawn from the dead or the live frames, whichever is further below
+its target, and kept with probability proportional to the line weight where it starts. A gap over
+a stoppage can be cut to the stoppage plus stoppage_spill_s of play each side; that was needed
+at SkillCorner's 11x, and makes no difference at the competition's ratio, so it is off. The seed
+comes from the match id, so the output is the same every run.
 """
 
 import json
@@ -50,8 +56,14 @@ def targets(labels, missing, dead_ratio):
     return dead_rate, live_rate
 
 
-def hide_mask(labels, period, fps, seed, missing, dead_ratio, lengths):
-    """Boolean mask of frames whose ball to hide."""
+def hide_mask(labels, period, fps, seed, missing, dead_ratio, lengths, line_dist=None,
+              bands=None, weights=None, spill_s=SPILL_S):
+    """Boolean mask of frames whose ball to hide.
+
+    line_dist: metres from the ball to the nearest line per frame (negative off the pitch).
+    With bands and weights, a proposed gap is kept with probability proportional to the weight
+    of the band the ball was in just before it. spill_s None leaves stoppage gaps uncut.
+    """
     n = len(labels)
     rng = np.random.default_rng(seed)
     graded = labels != "X"
@@ -62,13 +74,16 @@ def hide_mask(labels, period, fps, seed, missing, dead_ratio, lengths):
     pools = {"dead": np.flatnonzero(is_dead), "live": np.flatnonzero(is_live)}
     hidden = np.zeros(n, dtype=bool)
     margin = int(MARGIN_S * fps)
-    spill = int(SPILL_S * fps)
+    spill = None if spill_s is None else int(spill_s * fps)
+    if weights is not None:
+        weights = np.asarray(weights, float) / max(weights)
     min_len = int(MIN_GAP_S * fps)
     stop_start, stop_end = np.zeros(n, dtype=int), np.zeros(n, dtype=int)
     for s, k in zip(*true_runs(is_dead)):
         stop_start[s:s + k], stop_end[s:s + k] = s, s + k
-    misses = 0
-    while misses < 2000:
+    misses = tries = 0
+    while misses < 2000 and tries < 200000:
+        tries += 1
         need = {k: want[k] - (hidden & (is_dead if k == "dead" else is_live)).sum() for k in want}
         if max(need.values()) <= 0:
             break
@@ -76,7 +91,7 @@ def hide_mask(labels, period, fps, seed, missing, dead_ratio, lengths):
         length = int(round(rng.choice(lengths) * fps))
         centre = int(rng.choice(pools[kind]))
         a, b = centre - length // 2, centre - length // 2 + length
-        if kind == "dead":  # a stoppage gap covers the stoppage, spilling at most SPILL_S into play
+        if kind == "dead" and spill is not None:  # cover the stoppage, spill at most SPILL_S
             a = max(a, stop_start[centre] - spill)
             b = min(b, stop_end[centre] + spill)
             if b - a < min_len:
@@ -89,6 +104,11 @@ def hide_mask(labels, period, fps, seed, missing, dead_ratio, lengths):
         if not ok:
             misses += 1
             continue
+        if weights is not None:  # the ball leaving the shot near a line
+            d = line_dist[a - 1]
+            band = next((i for i, (lo, hi) in enumerate(bands) if lo <= d < hi), len(bands) - 1)
+            if rng.random() > weights[band]:
+                continue
         hidden[a:b] = True
     return hidden
 
@@ -98,8 +118,13 @@ def degrade(match, config=None):
     c = config or settings()
     frames = match.frames.sort_values("frame", ignore_index=True)
     seed = zlib.crc32(match.key.encode())
+    length, width = match.pitch
+    x, y = frames["ball_x"].to_numpy(float) * length, frames["ball_y"].to_numpy(float) * width
+    line_dist = np.nan_to_num(np.minimum.reduce([x, length - x, y, width - y]), nan=1000.0)
     mask = hide_mask(frames["label"].to_numpy(), frames["period"].to_numpy(), match.fps, seed,
-                     c["missing"], c["dead_ratio"], np.asarray(c["gap_lengths_s"]))
+                     c["missing"], c["dead_ratio"], np.asarray(c["gap_lengths_s"]), line_dist,
+                     c.get("line_bands_m"), c.get("line_weights_applied", c.get("line_weights")),
+                     c.get("stoppage_spill_s", SPILL_S))
     frames = frames.copy()
     frames.loc[mask, ["ball_x", "ball_y"]] = np.nan
     return Tracking(frames, match.players, match.fps, match.pitch, match.home, match.away)

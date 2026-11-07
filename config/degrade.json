@@ -1,6 +1,31 @@
 {
- "missing": 0.4069,
- "dead_ratio": 11.14,
+ "missing": 0.408,
+ "dead_ratio": 2.78,
+ "line_bands_m": [
+  [
+   -1000,
+   0
+  ],
+  [
+   0,
+   3
+  ],
+  [
+   3,
+   10
+  ],
+  [
+   10,
+   1000
+  ]
+ ],
+ "line_weights": [
+  3.98,
+  2.29,
+  1.16,
+  0.54
+ ],
+ "stoppage_spill_s": null,
  "gap_lengths_s": [
   5.16,
   5.28,
@@ -42,11 +67,11 @@
   7.76,
   8.0,
   8.04,
-  8.2,
   8.28,
   8.8,
   8.88,
   8.92,
+  8.96,
   9.16,
   9.16,
   9.28,
@@ -100,9 +125,9 @@
   21.16,
   21.76,
   22.32,
-  22.92,
   23.08,
   23.08,
+  23.88,
   24.12,
   24.16,
   24.24,
@@ -113,11 +138,11 @@
   28.88,
   29.16,
   29.72,
-  29.72,
   29.76,
   30.04,
+  30.04,
   31.16,
-  31.52,
+  31.84,
   33.44,
   37.16,
   39.04,
@@ -135,5 +160,15 @@
   138.64,
   221.48
  ],
- "sources": "missing and gap_lengths_s from competition/BAR-ATH tracking (no labels); dead_ratio from the skillcorner train split"
+ "checks": {
+  "dead_ratio_from_tags_lower_bound": 1.75,
+  "dead_ratio_skillcorner_not_used": 11.14
+ },
+ "sources": "all from competition/BAR-ATH tracking and its automatic smart tagging, no labels; dead_ratio by Bayes with P(dead | player speed) from the idsse train labels. SkillCorner's ratio is TV replays, so it is not used.",
+ "line_weights_applied": [
+  2.234,
+  1.502,
+  1.158,
+  0.54
+ ]
 }

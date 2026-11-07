@@ -51,3 +51,18 @@ def test_same_seed_same_mask():
     a = hide_mask(labels, period, FPS, 7, 0.4, 10, LENGTHS)
     b = hide_mask(labels, period, FPS, 7, 0.4, 10, LENGTHS)
     assert (a == b).all()
+
+
+def test_line_weights_move_gap_starts_towards_lines():
+    labels, period = match_labels()
+    n = len(labels)
+    line = np.where((np.arange(n) // 250) % 4 == 0, 1.0, 30.0)   # a quarter of the time near a line
+    bands, w = [(-1000, 3), (3, 1000)], [8.0, 1.0]
+    plain = hide_mask(labels, period, FPS, 3, 0.4, 3, LENGTHS)
+    weighted = hide_mask(labels, period, FPS, 3, 0.4, 3, LENGTHS, line, bands, w)
+
+    def near_share(mask):
+        s, k = true_runs(mask)
+        return np.mean(line[s - 1] < 3)
+
+    assert near_share(weighted) > near_share(plain) + 0.1

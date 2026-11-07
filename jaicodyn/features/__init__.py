@@ -17,7 +17,10 @@ def feature_path(match):
 def build(match, force=False):
     """Team features for a match, cached under data/features/."""
     path = feature_path(match)
-    if path.exists() and not force:
+    source = match.folder / "frames.parquet"
+    fresh = path.exists() and (not source.exists()
+                               or path.stat().st_mtime >= source.stat().st_mtime)
+    if fresh and not force:  # stale if the match was re-processed after the features were built
         table = pd.read_parquet(path)
         if REQUIRED <= set(table.columns):
             return table  # otherwise built by an older version: rebuild
