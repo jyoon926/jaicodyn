@@ -6,10 +6,16 @@ from jaicodyn.decode import A, D, H, Params, decode, switch_costs, viterbi
 FPS, PITCH = 25, (100.0, 50.0)
 
 
-def feats(near_h, near_a, ball_x=50.0, period=None):
+def rolling(n, start=50.0):
+    """A ball in play: 2 m/s. A still ball beside a player is a dead-ball cue."""
+    return start + np.arange(n) * 0.08
+
+
+def feats(near_h, near_a, ball_x=None, period=None):
     n = len(near_h)
+    ball_x = rolling(n) if ball_x is None else np.broadcast_to(ball_x, n)
     return pd.DataFrame({"frame": np.arange(n), "period": period or [1] * n,
-                         "ball_x": np.broadcast_to(ball_x, n), "ball_y": np.full(n, 25.0),
+                         "ball_x": ball_x, "ball_y": np.full(n, 25.0),
                          "near_H": near_h, "near_A": near_a, "speed_med": np.full(n, 2.0)})
 
 
@@ -32,7 +38,7 @@ def test_short_touch_does_not_flip_possession():
 def test_sustained_control_flips_and_gap_holds():
     near_h = np.r_[np.full(100, 0.5), np.full(100, np.nan), np.full(100, 3.0)]
     near_a = np.r_[np.full(100, 3.0), np.full(100, np.nan), np.full(100, 0.5)]
-    x = np.r_[np.full(100, 50.0), np.full(100, np.nan), np.full(100, 50.0)]
+    x = np.r_[rolling(100), np.full(100, np.nan), rolling(100)]
     out = decode(feats(near_h, near_a, x), FPS, PITCH)
     assert out[0] == "H" and out[-1] == "A"
     assert len(set(out[:100])) == 1 and len(set(out[-50:])) == 1

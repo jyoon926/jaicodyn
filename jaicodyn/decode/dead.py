@@ -10,11 +10,14 @@ Positive means the ball is out of play. Each cue is a physical observation about
     gap       ball unseen for a long stretch: 0 up to GAP_FROM_S, +GAP_W from GAP_FULL_S
     tag       automatic smart tagging marks a set piece starting: +TAG_W from TAG_PRE_S before
               its start to TAG_POST_S after. Tags are Metrica's automatic output, not human data.
-    bias      -BIAS_W: the ball is in play most of the time, so with no cue the answer is live
+    bias      -BIAS_W: a lean towards live when no cue fires. Tuned to 0: the cues alone are
+              balanced, and a lean either way costs spellF1 (scripts/robustness.py)
 
 Speed thresholds are relative to the match so they carry across providers whose speed scales
-differ. Set from what each cue means, not fitted to the provided game's labels (RULES.md); tune
-on other labelled games.
+differ. Set from what each cue means, then STILL_W and BIAS_W tuned on the idsse train games
+degraded like the competition tracking, at missing-ball ratios 1.75x, 2.8x and 5x, strict labels,
+and confirmed once on the validation games (+0.023 to +0.044 spellF1). Never fitted to the
+provided game's labels (RULES.md).
 """
 
 from dataclasses import dataclass
@@ -29,7 +32,7 @@ from ..features.ball import true_runs
 class DeadParams:
     off_w: float = 2.0
     off_margin_m: float = 1.0
-    still_w: float = 1.0
+    still_w: float = 2.0         # tuned: x2 won 5/5 train games at every ratio, confirmed on validation
     still_mps: float = 0.3
     moving_w: float = 0.5
     moving_mps: float = 3.0
@@ -41,7 +44,7 @@ class DeadParams:
     tag_w: float = 2.0
     tag_pre_s: float = 3.0
     tag_post_s: float = 2.0
-    bias_w: float = 0.5
+    bias_w: float = 0.0          # tuned: flat from -0.125 to +0.25 with still_w 2; -0.5 clearly worse
     smooth_s: float = 1.0
 
 
