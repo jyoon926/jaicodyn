@@ -76,6 +76,11 @@ def show(key, r):
 
 
 def competition(match, public, out):
+    # The processed match loads without the bundle, but the smart tagging is read from it; a run
+    # without it writes a valid-looking, different submission. Refuse instead.
+    if match.tags is None:
+        sys.exit("{}: smart tagging not found under {}. Set MTAH_DATA_DIR to the folder holding "
+                 "tactical/ (see README).".format(match.key, paths.COMPETITION))
     frame, labels = predict(match)
     table = submission(match, frame, labels)
     reason = pm.validate_submission(table, len(table))

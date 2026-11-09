@@ -12,11 +12,17 @@ The challenge data bundle is not in this repository. Download it, then point `MT
 folder that holds `tactical/` (the official starter tools read the same variable):
 
 ```bash
-export MTAH_DATA_DIR=~/Downloads/MoreThanAHackData   # wherever you unpacked the bundle
+export MTAH_DATA_DIR=/path/to/your/hackathon/data   # the folder that holds tactical/
 ```
 
-Add that line to `~/.zshrc` (or `~/.bashrc`) so every new terminal has it. If it is unset, the code
-looks in `data/competition/` instead, so unpacking the bundle there works too.
+**Run this in every terminal before any command below**, or add it to `~/.zshrc` (or `~/.bashrc`)
+so every new terminal has it. Check it with `echo $MTAH_DATA_DIR`. If it is unset, the code looks
+in `data/competition/` instead, so unpacking the bundle there works too.
+
+> **Why it matters:** the processed match loads without the bundle, but the smart tagging is read
+> from it. A run without `MTAH_DATA_DIR` used to write a valid-looking but *different*
+> `jaicodyn.csv`. `scripts.decode` now stops with an error instead; if you see "smart tagging not
+> found", set the variable and run again.
 
 The folder should look like this:
 
@@ -34,6 +40,7 @@ MoreThanAHackData/
 ### Install and build
 
 ```bash
+export MTAH_DATA_DIR=/path/to/your/hackathon/data   # every new terminal, unless in ~/.zshrc
 git submodule update --init
 pip install -r requirements.txt
 python -m scripts.prepare_data     # downloads the labelled open games (about 4.6 GB), processes all

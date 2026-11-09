@@ -78,3 +78,65 @@ def test_periods_decoded_separately():
     out = decode(feats(near_h, near_a, period=[1] * n + [2] * n), FPS,
                  PITCH, p=Params(turnover_s=100))
     assert out[0] == "H" and out[-1] == "A"
+
+
+def restart_case(near_h_after=1.45, near_a_after=1.55):
+    """H in possession, ball out for 3 s, then play resumes with H a little nearer. The default
+    is too little evidence (about 0.4 s over 4 s) to pay for a turnover once play is under way."""
+    near_h = np.r_[np.full(100, 0.5), np.full(75, 0.5), np.full(100, near_h_after)]
+    near_a = np.r_[np.full(100, 3.0), np.full(75, 3.0), np.full(100, near_a_after)]
+    x = np.r_[rolling(100), np.full(75, -5.0), rolling(100)]
+    return feats(near_h, near_a, x)
+
+
+def spells(labels):
+    out, start = [], 0
+    for i in range(1, len(labels) + 1):
+        if i == len(labels) or labels[i] != labels[start]:
+            out.append((labels[start], start, i))
+            start = i
+    return out
+
+
+def test_restart_evidence_is_zero_at_half_and_outside_windows():
+    from jaicodyn.decode import restart_evidence
+    assert (restart_evidence(np.array([0.5, np.nan])) == 0).all()
+    assert restart_evidence(np.array([0.9]))[0] > 0 > restart_evidence(np.array([0.1]))[0]
+
+
+def test_restart_windows_follow_each_restart():
+    from jaicodyn.decode import restart_windows
+    labels = np.array(list("HHDDDAAAAAAHH"))
+    period = np.ones(len(labels), int)
+    w = restart_windows(labels, period, np.full(len(labels), 0.2), fps=1,
+                        p=Params(restart_window_s=4))
+    assert np.isnan(w[[2, 3, 4, 9, 10]]).all()      # dead, and after the window
+    assert (w[[0, 1]] == 0.2).all()                  # kickoff, cut short by the stoppage
+    assert (w[5:9] == 0.2).all()                     # 4 frames after the restart
+
+
+def test_uninformative_restart_probs_change_nothing():
+    from jaicodyn.decode import posterior
+    f = restart_case()
+    half = np.full(len(f), 0.5)
+    for scale in (0.5, 1.0, 2.0):
+        p = Params(restart_scale=scale)
+        assert (decode(f, FPS, PITCH, p=p) == decode(f, FPS, PITCH, p=p, restart_p_home=half)).all()
+        assert np.allclose(posterior(f, FPS, PITCH, p=p),
+                           posterior(f, FPS, PITCH, p=p, restart_p_home=half))
+
+
+def test_confident_restart_prob_gives_the_restart_to_that_team():
+    f = restart_case()
+    assert decode(f, FPS, PITCH)[-1] == "H"
+    out = decode(f, FPS, PITCH, restart_p_home=np.full(len(f), 0.001))   # away restarts
+    assert out[120] == "D" and out[-1] == "A"
+
+
+def test_restart_possession_is_not_handed_straight_back():
+    # H clearly nearer after the restart: the per-stoppage cost version restarted to A and gave
+    # the ball back to H one frame later. Spread as evidence, A must hold through the window.
+    f = restart_case(1.4, 1.6)
+    out = decode(f, FPS, PITCH, restart_p_home=np.full(len(f), 0.001))
+    after = [sp for sp in spells(out) if sp[1] >= 175]
+    assert after[0][0] == "A" and after[0][2] - after[0][1] >= 3 * FPS

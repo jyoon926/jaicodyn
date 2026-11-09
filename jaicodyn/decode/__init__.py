@@ -51,13 +51,15 @@ class Params:
     turnover_s: float = 0.5      # cost of H <-> A; chosen on the train split (scripts/tune.py)
     stop_s: float = 1.0          # cost of H/A -> D
     restart_s: float = 1.0       # cost of D -> H/A
+    restart_scale: float = 1.0   # restart evidence: seconds of evidence per nat of log-odds
+    restart_window_s: float = 3.0  # ... spread over this long after each restart
     gap_w: float = 1.0           # evidence per second from the gap classifier's log-odds
     nats_per_s: float = 4.0      # posterior only: log-odds per second of evidence (calibrate)
     dead: DeadParams = DeadParams()
 
 
-def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None):
-    """[n, 3] per-frame scores for H, A, D."""
+def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_window_p=None):
+    """[n, 3] per-frame scores for H, A, D. restart_window_p: see restart_windows()."""
     near_h = feats["near_H"].to_numpy(float)
     near_a = feats["near_A"].to_numpy(float)
     has_ball = ~np.isnan(feats["ball_x"].to_numpy(float))
@@ -78,7 +80,45 @@ def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None):
         rows = ~np.isnan(gap_probs[:, 0])
         logp = np.log(np.clip(gap_probs[rows], 1e-3, 1))
         score[rows] += p.gap_w * (logp - logp.mean(axis=1, keepdims=True))
+    if restart_window_p is not None:
+        e = restart_evidence(restart_window_p, p)
+        score[:, H] += e
+        score[:, A] -= e
     return score / fps
+
+
+def restart_evidence(p_home, p=Params()):
+    """Per-second evidence for home over away, from P(home restarts), on restart-window rows.
+
+    restart_scale * log(p_H / p_A) / 2 / restart_window_s, added to H and taken from A: over a
+    whole window the H-vs-A difference is restart_scale * log(p_H / p_A) seconds of evidence --
+    the same as a per-stoppage restart cost of restart_scale * (-log p_X) -- but spread, so a
+    path only collects it by keeping that team in possession, not by restarting and handing the
+    ball straight back. Exactly 0 at p = 0.5, and on NaN (rows outside every window).
+    """
+    ph = np.clip(np.nan_to_num(np.asarray(p_home, float), nan=0.5), 1e-3, 1 - 1e-3)
+    log_odds = np.log(ph) - np.log1p(-ph)          # exactly 0 at 0.5
+    return p.restart_scale * log_odds / 2 / p.restart_window_s
+
+
+def restart_windows(labels, period, p_home, fps, p=Params()):
+    """P(home restarts) on the first restart_window_s of each live spell after a restart.
+
+    labels: a decode without restart evidence, which places the restarts: every D -> H/A, and a
+    period opening live (kickoff). Each window takes p_home at its restart frame and stops early
+    if play goes dead again. NaN elsewhere.
+    """
+    out = np.full(len(labels), np.nan)
+    live = np.isin(labels, ["H", "A"])
+    width = int(round(p.restart_window_s * fps))
+    starts = np.flatnonzero(live[1:] & (labels[:-1] == "D") & (period[1:] == period[:-1])) + 1
+    opens = np.flatnonzero(np.r_[True, period[1:] != period[:-1]] & live)
+    for s in np.r_[starts, opens]:
+        e = s
+        while e < min(len(labels), s + width) and live[e] and period[e] == period[s]:
+            e += 1
+        out[s:e] = p_home[s]
+    return out
 
 
 def switch_costs(p=Params()):
@@ -130,23 +170,43 @@ def _periods(feats):
     return zip(np.r_[0, cuts], np.r_[cuts, len(feats)])
 
 
-def decode(feats, fps, pitch, tags=None, p=Params(), gap_probs=None):
-    """H/A/D label per row of a features table, each period decoded on its own."""
-    score = emissions(feats, fps, pitch, tags, p, gap_probs)
-    cost = switch_costs(p)
+def _viterbi_periods(feats, score, cost):
     out = np.empty(len(feats), dtype=np.int8)
     for a, b in _periods(feats):
         out[a:b] = viterbi(score[a:b], cost)
     return STATES[out]
 
 
-def posterior(feats, fps, pitch, tags=None, p=Params(), gap_probs=None):
+def _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home):
+    """First pass without restart evidence places the restarts; returns the window array."""
+    first = _viterbi_periods(feats, emissions(feats, fps, pitch, tags, p, gap_probs),
+                             switch_costs(p))
+    return restart_windows(first, feats["period"].to_numpy(), np.asarray(restart_p_home, float),
+                           fps, p)
+
+
+def decode(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_p_home=None):
+    """H/A/D label per row of a features table, each period decoded on its own.
+
+    restart_p_home: optional P(home restarts) per row, read at each restart and turned into
+    evidence over the first restart_window_s after it (restart_evidence). Needs two passes: the
+    first, without it, places the restarts.
+    """
+    windows = None if restart_p_home is None else _windows(feats, fps, pitch, tags, p, gap_probs,
+                                                           restart_p_home)
+    return _viterbi_periods(feats, emissions(feats, fps, pitch, tags, p, gap_probs, windows),
+                            switch_costs(p))
+
+
+def posterior(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_p_home=None):
     """[n, 3] probability of H, A, D per row, each period on its own.
 
     Scores and costs are scaled by nats_per_s to read as log-odds. That scaling leaves the
     Viterbi path unchanged; it only sets how confident the probabilities are.
     """
-    score = emissions(feats, fps, pitch, tags, p, gap_probs) * p.nats_per_s
+    windows = None if restart_p_home is None else _windows(feats, fps, pitch, tags, p, gap_probs,
+                                                           restart_p_home)
+    score = emissions(feats, fps, pitch, tags, p, gap_probs, windows) * p.nats_per_s
     cost = switch_costs(p) * p.nats_per_s
     out = np.empty((len(feats), 3))
     for a, b in _periods(feats):
