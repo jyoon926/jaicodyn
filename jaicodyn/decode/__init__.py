@@ -53,17 +53,13 @@ class Params:
     restart_s: float = 1.0       # cost of D -> H/A
     restart_scale: float = 1.0   # restart evidence: seconds of evidence per nat of log-odds
     restart_window_s: float = 3.0  # ... spread over this long after each restart
-    post_restart_s: float = 0.0  # after each restart, for this long ...
-    post_restart_who_w: float = 1.0  # ... keep this share of the who-is-nearer evidence (1 = off)
     gap_w: float = 1.0           # evidence per second from the gap classifier's log-odds
     nats_per_s: float = 4.0      # posterior only: log-odds per second of evidence (calibrate)
     dead: DeadParams = DeadParams()
 
 
-def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_window_p=None,
-              post_restart=None):
-    """[n, 3] per-frame scores for H, A, D. restart_window_p: see restart_windows().
-    post_restart: rows in the first post_restart_s after a restart (see restart_mask)."""
+def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_window_p=None):
+    """[n, 3] per-frame scores for H, A, D. restart_window_p: see restart_windows()."""
     near_h = feats["near_H"].to_numpy(float)
     near_a = feats["near_A"].to_numpy(float)
     has_ball = ~np.isnan(feats["ball_x"].to_numpy(float))
@@ -76,9 +72,6 @@ def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_
     gate[off_pitch(feats, pitch, p.dead.off_margin_m)] = 0
     gate[~has_ball] = 0
 
-    if post_restart is not None:
-        # just after a restart the nearest player is often an opponent closing the taker down
-        who = np.where(post_restart, who * p.post_restart_who_w, who)
     score = np.zeros((len(feats), 3))
     score[:, H] = gate * (p.live_w + who / 2)
     score[:, A] = gate * (p.live_w - who / 2)
@@ -106,13 +99,6 @@ def restart_evidence(p_home, p=Params()):
     ph = np.clip(np.nan_to_num(np.asarray(p_home, float), nan=0.5), 1e-3, 1 - 1e-3)
     log_odds = np.log(ph) - np.log1p(-ph)          # exactly 0 at 0.5
     return p.restart_scale * log_odds / 2 / p.restart_window_s
-
-
-def restart_mask(labels, period, fps, seconds):
-    """Rows in the first `seconds` of live play after each restart (D -> H/A) or kickoff."""
-    ones = np.ones(len(labels))
-    return ~np.isnan(restart_windows(labels, period, ones, fps,
-                                     Params(restart_window_s=seconds)))
 
 
 def restart_windows(labels, period, p_home, fps, p=Params()):
@@ -191,18 +177,14 @@ def _viterbi_periods(feats, score, cost):
     return STATES[out]
 
 
-def _restart_inputs(feats, fps, pitch, tags, p, gap_probs, restart_p_home):
-    """(restart windows, post-restart mask) from a first pass that places the restarts; None
-    for whichever is not asked for. Without either, no first pass is run."""
-    if restart_p_home is None and p.post_restart_s <= 0:
-        return None, None
+def _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home):
+    """First pass without restart evidence places the restarts; returns the window array."""
+    if restart_p_home is None:
+        return None
     first = _viterbi_periods(feats, emissions(feats, fps, pitch, tags, p, gap_probs),
                              switch_costs(p))
-    period = feats["period"].to_numpy()
-    windows = None if restart_p_home is None else restart_windows(
-        first, period, np.asarray(restart_p_home, float), fps, p)
-    mask = None if p.post_restart_s <= 0 else restart_mask(first, period, fps, p.post_restart_s)
-    return windows, mask
+    return restart_windows(first, feats["period"].to_numpy(), np.asarray(restart_p_home, float),
+                           fps, p)
 
 
 def decode(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_p_home=None):
@@ -212,8 +194,8 @@ def decode(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_p_h
     evidence over the first restart_window_s after it (restart_evidence). Needs two passes: the
     first, without it, places the restarts.
     """
-    windows, mask = _restart_inputs(feats, fps, pitch, tags, p, gap_probs, restart_p_home)
-    return _viterbi_periods(feats, emissions(feats, fps, pitch, tags, p, gap_probs, windows, mask),
+    windows = _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home)
+    return _viterbi_periods(feats, emissions(feats, fps, pitch, tags, p, gap_probs, windows),
                             switch_costs(p))
 
 
@@ -223,8 +205,8 @@ def posterior(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_
     Scores and costs are scaled by nats_per_s to read as log-odds. That scaling leaves the
     Viterbi path unchanged; it only sets how confident the probabilities are.
     """
-    windows, mask = _restart_inputs(feats, fps, pitch, tags, p, gap_probs, restart_p_home)
-    score = emissions(feats, fps, pitch, tags, p, gap_probs, windows, mask) * p.nats_per_s
+    windows = _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home)
+    score = emissions(feats, fps, pitch, tags, p, gap_probs, windows) * p.nats_per_s
     cost = switch_costs(p) * p.nats_per_s
     out = np.empty((len(feats), 3))
     for a, b in _periods(feats):
