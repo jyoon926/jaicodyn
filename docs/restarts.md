@@ -220,12 +220,39 @@ model would still have to transfer from idsse to the competition's camera. Given
 ceiling of about +0.05 for a perfect call, a 70%-accurate model is worth about +0.01. We dropped
 it.
 
+## 5. Smart-tagging set pieces as the restart team (kept)
+
+The competition's automatic tags name the team for corners, goal kicks and free kicks. Throw-ins
+and kickoffs are tagged `N/A`. The labelled games have no tags, so this could not be validated
+against labels. Every setting comes from a label-free check on the competition match itself
+(`jaicodyn/decode/tags.py`).
+
+- **What the tag team means.** Of the corners with the ball visible, every one was tagged with the
+  team attacking that end (9 of 9). Of the goal kicks, every one was tagged with the team defending
+  it (9 of 9). We read the attacking directions from the team centroids. So the tag names the team
+  taking the set piece.
+- **Confidence.** That agreement (18 of 18) with Laplace's rule gives P = 19/20 = 0.95.
+- **Timing.** On all 27 set pieces with a team, the decoder's restart falls 2–14 s after the tag
+  starts. The tag's team therefore covers 1 s before the tag to 15 s after it, and goes through
+  the restart evidence of section 2.
+
+Effect on the competition match:
+
+| Set piece | Decoder's first team = tag team, before | After |
+|---|---|---|
+| Corner kick (12) | 25% | 100% |
+| Goal kick (10) | 60% | 90% |
+| Free kick (5) | 60% | 100% |
+
+1.03% of graded frames change label. The decoder finds 280 possessions instead of 278, and none
+is shorter than 1 s. On the labelled games nothing changes, because they have no tags.
+
 ## What we did not try
 
-- **Smart-tagging `Team` on set pieces.** The competition's automatic tags name the team for
-  corners, goal kicks, free kicks and kickoffs, though not throw-ins. A rule that trusts the tag at
-  a nearby restart might be accurate on the competition match. The labelled games have no tags,
-  though, so it could not be validated, and section 2 caps what any restart call can add.
+- **Smart-tagging phase teams as possession evidence.** The phase tags (build-up, progression,
+  transitions and so on) carry a team and cover 82% of graded frames. Their team agrees with the
+  decoder 83–87% of the time for build-up and progression, and the "defending" codes name the other
+  team. We did not try this as possession evidence.
 - **Sharper taker cues.** Examples are the thrower standing beyond the touchline, the goalkeeper
   at a goal kick, and the closest approach to the spot over a few seconds rather than one frame.
   All are limited by the same ceiling.

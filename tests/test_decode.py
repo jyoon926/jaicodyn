@@ -140,3 +140,17 @@ def test_restart_possession_is_not_handed_straight_back():
     out = decode(f, FPS, PITCH, restart_p_home=np.full(len(f), 0.001))
     after = [sp for sp in spells(out) if sp[1] >= 175]
     assert after[0][0] == "A" and after[0][2] - after[0][1] >= 3 * FPS
+
+
+def test_set_piece_tags_give_the_restart_team():
+    import pandas as pd
+    from jaicodyn.decode.tags import SET_PIECE_P, set_piece_restart_p
+    f = feats(np.full(2000, 0.5), np.full(2000, 3.0))
+    tags = pd.DataFrame({"start": [100, 1000, 1800], "stop": [975, 1875, 2675],
+                         "code": ["SET PIECES", "Set Pieces", "SET PIECES"],
+                         "team": ["A", "H", ""], "type": ["Corner Kick", "Goal Kick", "Throw-in"]})
+    p = set_piece_restart_p(f, tags, FPS)
+    assert np.isclose(p[100], 1 - SET_PIECE_P) and np.isclose(p[1000 + 10 * FPS], SET_PIECE_P)
+    assert np.isnan(p[1800 + 5])                                   # throw-ins carry no team
+    assert np.isnan(p[100 - 2 * FPS]) and np.isnan(p[100 + 16 * FPS])
+    assert set_piece_restart_p(f, None, FPS) is None

@@ -25,6 +25,7 @@ from jaicodyn.data import available, load, paths
 from jaicodyn.data.labels import target_labels
 from jaicodyn.data.match import is_built
 from jaicodyn.decode import decode, posterior
+from jaicodyn.decode.tags import set_piece_restart_p
 from jaicodyn.features import build
 from scripts.build_features import resolve
 
@@ -34,13 +35,16 @@ SUBMISSION = paths.ROOT / "jaicodyn.csv"
 
 def predict(match):
     feats = build(match)
-    return feats["frame"].to_numpy(), decode(feats, match.fps, match.pitch, match.tags)
+    restarts = set_piece_restart_p(feats, match.tags, match.fps)   # None without tags
+    return feats["frame"].to_numpy(), decode(feats, match.fps, match.pitch, match.tags,
+                                             restart_p_home=restarts)
 
 
 def save_probs(match):
     """P(H), P(A), P(D) per frame, next to the features. Returns the path."""
     feats = build(match)
-    post = posterior(feats, match.fps, match.pitch, match.tags)
+    post = posterior(feats, match.fps, match.pitch, match.tags,
+                     restart_p_home=set_piece_restart_p(feats, match.tags, match.fps))
     path = paths.DATA / "decoded" / match.source / "{}_probs.parquet".format(match.id)
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"frame": feats["frame"], "p_H": post[:, 0], "p_A": post[:, 1],
