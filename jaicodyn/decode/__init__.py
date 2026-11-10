@@ -46,8 +46,11 @@ H, A, D = 0, 1, 2
 class Params:
     closer_m: float = 1.0        # nearest-player margin that counts as clearly nearer
     gate_near_m: float = 1.5     # someone this close to the ball: full evidence
-    gate_far_m: float = 4.0      # nobody this close: no evidence
-    live_w: float = 0.25         # evidence per second that play is live, player at ball
+    gate_far_m: float = 2.5      # nobody this close: no evidence. Tuned on train (was 4.0):
+                                 # +0.014-0.017 on degraded idsse at every missing-ball ratio
+    live_w: float = 1.0          # evidence per second that play is live, player at ball. Tuned on
+                                 # degraded idsse only, a dead-or-live setting (was 0.25); with
+                                 # gate_far_m 2.5: +0.024-0.028, 5/5 games, at every ratio
     turnover_s: float = 0.5      # cost of H <-> A; chosen on the train split (scripts/tune.py)
     stop_s: float = 1.0          # cost of H/A -> D
     restart_s: float = 1.0       # cost of D -> H/A

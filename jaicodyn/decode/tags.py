@@ -75,13 +75,13 @@ def _logit(p):
     return np.log(p / (1 - p))
 
 
-def phase_team_evidence(feats, tags, phases=PHASES):
+def phase_team_evidence(feats, tags, phases=PHASES, scale=1.0):
     """Per-second evidence for home (+) or away (-) from phase tags, on frames without a ball.
 
     Where tags overlap, the most reliable one speaks (they are nested and correlated, so summing
     would count the same information twice). Strength is calibrated against the nearest-player
     cue, whose up-to-1-per-second home-vs-away evidence is right DECODER_VISIBLE_ACCURACY of the
-    time: a tag of accuracy p gives logit(p) / logit(DECODER_VISIBLE_ACCURACY) per second.
+    time: a tag of accuracy p gives scale * logit(p) / logit(DECODER_VISIBLE_ACCURACY) per second.
     None without tags.
     """
     if tags is None or not len(tags):
@@ -103,5 +103,5 @@ def phase_team_evidence(feats, tags, phases=PHASES):
     missing = feats["ball_x"].isna().to_numpy()
     strength = np.where(best_p > 0.5, _logit(np.clip(best_p, 0.5 + 1e-9, P_CAP))
                         / _logit(DECODER_VISIBLE_ACCURACY), 0.0)
-    out = np.where(missing, team * strength, 0.0)
+    out = np.where(missing, scale * team * strength, 0.0)
     return out if np.any(out != 0) else None
