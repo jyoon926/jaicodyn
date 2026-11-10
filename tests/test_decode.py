@@ -154,3 +154,27 @@ def test_set_piece_tags_give_the_restart_team():
     assert np.isnan(p[1800 + 5])                                   # throw-ins carry no team
     assert np.isnan(p[100 - 2 * FPS]) and np.isnan(p[100 + 16 * FPS])
     assert set_piece_restart_p(f, None, FPS) is None
+
+
+def test_phase_evidence_only_in_gaps_and_only_between_teams():
+    import pandas as pd
+    from jaicodyn.decode.tags import phase_team_evidence
+    n = 600
+    x = np.r_[rolling(200), np.full(200, np.nan), rolling(200)]
+    f = feats(np.r_[np.full(200, 0.5), np.full(200, np.nan), np.full(200, 0.5)],
+              np.r_[np.full(200, 3.0), np.full(200, np.nan), np.full(200, 3.0)], x)
+    tags = pd.DataFrame({"start": [0, 0], "stop": [n, n], "type": ["", ""],
+                         "code": ["PLAYERS IN THE BOX", "DEFENDING IN MIDDLE THIRD"],
+                         "team": ["H", "H"]})       # the mirror names H as defending: A has it
+    e = phase_team_evidence(f, tags)
+    assert (e[:200] == 0).all() and (e[400:] == 0).all()   # visible ball: no tag evidence
+    assert (e[200:400] < 0).all()                           # the more reliable source wins: A
+    from jaicodyn.decode import emissions
+    base, with_tags = emissions(f, FPS, PITCH), emissions(f, FPS, PITCH, team_evidence=e)
+    assert np.allclose(base[:, 2], with_tags[:, 2])          # dead-ball scores untouched
+    assert (with_tags[200:400].max(axis=1) <= base[200:400].max(axis=1) + 1e-12).all()
+
+
+def test_no_tags_no_phase_evidence():
+    from jaicodyn.decode.tags import phase_team_evidence
+    assert phase_team_evidence(feats(np.full(10, 0.5), np.full(10, 3.0)), None) is None

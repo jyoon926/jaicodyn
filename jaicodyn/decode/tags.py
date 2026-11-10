@@ -38,3 +38,70 @@ def set_piece_restart_p(feats, tags, fps, p=SET_PIECE_P, before_s=BEFORE_S, afte
         a, b = np.searchsorted(frame, [start - before_s * fps, start + after_s * fps])
         out[a:b] = p if team == "H" else 1 - p
     return out if np.isfinite(out).any() else None
+
+
+# Phase tags as possession evidence inside ball gaps.
+#
+# Each phase code names a team; for these it is the team in possession, and for its mirror code
+# (same intervals, always the other team) the team without the ball, so mirrors are flipped and a
+# pair counts as one source. GOALS (about 169 s, running on into the celebrations and mostly dead
+# ball) and SET PIECES (handled above) are left out.
+#
+# Accuracy per source, label-free: if tags and decoder erred independently, their agreement on
+# visible frames would be p_d * p_t + (1 - p_d)(1 - p_t), with p_d = 0.852 the decoder's team
+# accuracy on visible frames of the degraded idsse train games. Solving for p_t gives the values
+# below (python -m scripts.tag_reliability). They are upper bounds: Metrica derives its tags from
+# the same tracking, so errors are shared and agreement is inflated -- two estimates came out above
+# 1 and are capped at P_CAP.
+DECODER_VISIBLE_ACCURACY = 0.852
+P_CAP = 0.95
+PHASES = {  # code: (flip, estimated accuracy as the possessing team)
+    "PROGRESSION": (False, 0.95),          # agreement 0.847 -> 0.99, capped
+    "DEFENDING IN MIDDLE THIRD": (True, 0.95),
+    "BUILD UP": (False, 0.95),             # agreement 0.900 -> 1.07, capped
+    "DEFENDING IN ATTACKING THIRD": (True, 0.95),
+    "LONG BALL": (False, 0.80),            # agreement 0.714
+    "BALL IN FINAL THIRD": (False, 0.78),  # agreement 0.695
+    "ATTACKING TRANSITION": (False, 0.76),  # agreement 0.683
+    "DEFENSIVE TRANSITION": (True, 0.76),
+    "CREATING CHANCES": (False, 0.77),     # agreement 0.688
+    "DEFENDING IN DEFENSIVE THIRD": (True, 0.77),
+    "BALL IN THE BOX": (False, 0.68),      # agreement 0.626
+    "PLAYERS IN THE BOX": (False, 0.60),   # agreement 0.570
+}
+
+
+def _logit(p):
+    return np.log(p / (1 - p))
+
+
+def phase_team_evidence(feats, tags, phases=PHASES):
+    """Per-second evidence for home (+) or away (-) from phase tags, on frames without a ball.
+
+    Where tags overlap, the most reliable one speaks (they are nested and correlated, so summing
+    would count the same information twice). Strength is calibrated against the nearest-player
+    cue, whose up-to-1-per-second home-vs-away evidence is right DECODER_VISIBLE_ACCURACY of the
+    time: a tag of accuracy p gives logit(p) / logit(DECODER_VISIBLE_ACCURACY) per second.
+    None without tags.
+    """
+    if tags is None or not len(tags):
+        return None
+    frame = feats["frame"].to_numpy()
+    best_p = np.zeros(len(feats))
+    team = np.zeros(len(feats))                      # +1 home in possession, -1 away
+    codes = tags["code"].str.upper()
+    for code, (flip, p) in phases.items():
+        rows = tags[codes == code]
+        for start, stop, t in zip(rows["start"], rows["stop"], rows["team"]):
+            if t not in ("H", "A"):
+                continue
+            side = (1.0 if t == "H" else -1.0) * (-1.0 if flip else 1.0)
+            a, b = np.searchsorted(frame, [start, stop])
+            better = best_p[a:b] < p
+            best_p[a:b][better] = p
+            team[a:b][better] = side
+    missing = feats["ball_x"].isna().to_numpy()
+    strength = np.where(best_p > 0.5, _logit(np.clip(best_p, 0.5 + 1e-9, P_CAP))
+                        / _logit(DECODER_VISIBLE_ACCURACY), 0.0)
+    out = np.where(missing, team * strength, 0.0)
+    return out if np.any(out != 0) else None

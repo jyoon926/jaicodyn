@@ -58,8 +58,14 @@ class Params:
     dead: DeadParams = DeadParams()
 
 
-def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_window_p=None):
-    """[n, 3] per-frame scores for H, A, D. restart_window_p: see restart_windows()."""
+def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_window_p=None,
+              team_evidence=None):
+    """[n, 3] per-frame scores for H, A, D. restart_window_p: see restart_windows().
+
+    team_evidence: optional per-second evidence for home (+) or away (-), such as the phase tags
+    (tags.phase_team_evidence). It is taken off the other team's score rather than added to the
+    named team's, so it moves only the choice between H and A, never between live and dead.
+    """
     near_h = feats["near_H"].to_numpy(float)
     near_a = feats["near_A"].to_numpy(float)
     has_ball = ~np.isnan(feats["ball_x"].to_numpy(float))
@@ -84,6 +90,10 @@ def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_
         e = restart_evidence(restart_window_p, p)
         score[:, H] += e
         score[:, A] -= e
+    if team_evidence is not None:
+        e = np.nan_to_num(np.asarray(team_evidence, float))
+        score[:, A] -= np.maximum(e, 0)
+        score[:, H] -= np.maximum(-e, 0)
     return score / fps
 
 
@@ -177,36 +187,38 @@ def _viterbi_periods(feats, score, cost):
     return STATES[out]
 
 
-def _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home):
+def _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home, team_evidence=None):
     """First pass without restart evidence places the restarts; returns the window array."""
     if restart_p_home is None:
         return None
-    first = _viterbi_periods(feats, emissions(feats, fps, pitch, tags, p, gap_probs),
-                             switch_costs(p))
+    first = _viterbi_periods(feats, emissions(feats, fps, pitch, tags, p, gap_probs,
+                                              team_evidence=team_evidence), switch_costs(p))
     return restart_windows(first, feats["period"].to_numpy(), np.asarray(restart_p_home, float),
                            fps, p)
 
 
-def decode(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_p_home=None):
+def decode(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_p_home=None,
+           team_evidence=None):
     """H/A/D label per row of a features table, each period decoded on its own.
 
     restart_p_home: optional P(home restarts) per row, read at each restart and turned into
     evidence over the first restart_window_s after it (restart_evidence). Needs two passes: the
     first, without it, places the restarts.
     """
-    windows = _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home)
-    return _viterbi_periods(feats, emissions(feats, fps, pitch, tags, p, gap_probs, windows),
-                            switch_costs(p))
+    windows = _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home, team_evidence)
+    return _viterbi_periods(feats, emissions(feats, fps, pitch, tags, p, gap_probs, windows,
+                                             team_evidence), switch_costs(p))
 
 
-def posterior(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_p_home=None):
+def posterior(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_p_home=None,
+              team_evidence=None):
     """[n, 3] probability of H, A, D per row, each period on its own.
 
     Scores and costs are scaled by nats_per_s to read as log-odds. That scaling leaves the
     Viterbi path unchanged; it only sets how confident the probabilities are.
     """
-    windows = _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home)
-    score = emissions(feats, fps, pitch, tags, p, gap_probs, windows) * p.nats_per_s
+    windows = _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home, team_evidence)
+    score = emissions(feats, fps, pitch, tags, p, gap_probs, windows, team_evidence) * p.nats_per_s
     cost = switch_costs(p) * p.nats_per_s
     out = np.empty((len(feats), 3))
     for a, b in _periods(feats):
