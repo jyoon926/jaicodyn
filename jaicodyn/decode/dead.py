@@ -37,7 +37,11 @@ class DeadParams:
     moving_w: float = 0.5
     moving_mps: float = 3.0
     slow_w: float = 1.0
-    slow_ratio: float = 1.5      # a factor of this below/above the match median is one unit
+    slow_ratio: float = 3.0      # a factor of this below/above the match median is one unit.
+                                 # Tuned on degraded idsse (was 1.5): +0.018-0.020, 5/5 games at
+                                 # every ratio; it weakens the cue both ways, so the decoder calls
+                                 # somewhat more dead ball (49% -> 52%, true 46%) and fewer, cleaner
+                                 # possessions
     gap_w: float = 0.5
     gap_from_s: float = 10.0
     gap_full_s: float = 30.0
