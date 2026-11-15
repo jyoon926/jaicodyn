@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from jaicodyn.decode import A, D, H, Params, decode, switch_costs, viterbi
+from jaicodyn.decode import A, D, H, Params, decode, decode_anchor_rules, switch_costs, viterbi
+from jaicodyn.decode.anchors import anchor_labels
 
 FPS, PITCH = 25, (100.0, 50.0)
 
@@ -33,6 +34,44 @@ def test_short_touch_does_not_flip_possession():
     near_h = np.r_[np.full(100, 0.5), np.full(10, 3.0), np.full(100, 0.5)]
     near_a = np.r_[np.full(100, 3.0), np.full(10, 0.5), np.full(100, 3.0)]
     assert set(decode(feats(near_h, near_a), FPS, PITCH)) == {"H"}   # 0.4 s touch by A
+
+
+def test_anchor_rules_pin_only_some_frames_and_fill_between_them():
+    near_h = np.r_[np.full(100, 0.5), np.full(10, 3.0), np.full(100, 0.5)]
+    near_a = np.r_[np.full(100, 3.0), np.full(10, 0.5), np.full(100, 3.0)]
+    anchors = anchor_labels(feats(near_h, near_a), FPS, p=Params(anchor_closer_m=2.0))
+    assert np.any(anchors == "H")
+    assert np.any(anchors == None)
+
+    near_h = np.r_[np.full(100, 0.5), np.full(100, 3.0)]
+    near_a = np.r_[np.full(100, 3.0), np.full(100, 0.5)]
+    out = decode_anchor_rules(feats(near_h, near_a), FPS, PITCH)
+    assert out[0] == "H" and out[-1] == "A"
+    assert np.any(np.asarray(out) == "H") and np.any(np.asarray(out) == "A")
+
+
+def test_anchor_rules_require_longer_sustained_control():
+    near_h = np.r_[np.full(20, 3.0), np.full(12, 0.5), np.full(20, 3.0)]
+    near_a = np.r_[np.full(20, 0.5), np.full(12, 3.0), np.full(20, 0.5)]
+    anchors = anchor_labels(feats(near_h, near_a), FPS)
+    assert not np.any(anchors[20:32] == "H")
+    assert np.any(anchors == None)
+
+
+def test_anchor_rules_require_a_very_clear_margin():
+    near_h = np.r_[np.full(30, 1.4), np.full(12, 0.4), np.full(30, 3.0)]
+    near_a = np.r_[np.full(30, 3.0), np.full(12, 2.5), np.full(30, 0.5)]
+    anchors = anchor_labels(feats(near_h, near_a), FPS, p=Params(anchor_closer_m=2.0))
+    assert not np.any(anchors[30:42] == "H")
+    assert np.any(anchors == None)
+
+
+def test_anchor_rules_skip_dead_ball_frames():
+    near_h = np.r_[np.full(60, 0.5), np.full(20, 0.2)]
+    near_a = np.r_[np.full(60, 3.0), np.full(20, 3.0)]
+    x = np.r_[50 + np.arange(60) * 0.08, np.full(20, 50.0)]
+    anchors = anchor_labels(feats(near_h, near_a, x), FPS, pitch=PITCH)
+    assert np.all(anchors[60:] == None)
 
 
 def test_sustained_control_flips_and_gap_holds():
