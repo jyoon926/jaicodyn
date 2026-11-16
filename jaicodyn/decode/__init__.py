@@ -42,6 +42,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .anchors import decode_anchor_rules
 from .dead import DeadParams, cues, sustained_off_pitch
 
 STATES = np.array(["H", "A", "D"])
