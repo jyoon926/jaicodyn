@@ -9,6 +9,8 @@ within DEDUP_M of a kept track are merged into it, position averaged -- and then
     cnt{r}_{t}   players within r metres of the ball, for r in RADII
     cx_{t}, cy_{t}  team centroid in metres
     speed_med    median speed of all tracked players, m/s
+    touch_{t}    1 within a touch by the team: the ball changing velocity at one of its players
+                 (touch.py)
 
 t is H or A. Ball-relative columns are NaN where the ball is unknown.
 """
@@ -19,8 +21,11 @@ import numpy as np
 import pandas as pd
 
 from .ball import clean_ball
+from .ghost import ghost_rows
+from .touch import touch_columns
 
 DEDUP_M = 1.0
+FEATURES_VERSION = 3  # bump when feature definitions change, so saved features rebuild
 MAX_PLAYER_SPEED = 12.0  # m/s; above any sprint
 RADII = (2, 5, 10)
 TEAMS = ("H", "A")
@@ -101,15 +106,26 @@ def median_player_speed(players, frame_index, fps, pitch, v_max=MAX_PLAYER_SPEED
     return med.reindex(frame_index).to_numpy(float)
 
 
-def team_features(match, radii=RADII, dedup_m=DEDUP_M):
-    """One row per frame of `match.frames`: ball, its source, and the team features."""
+def team_features(match, radii=RADII, dedup_m=DEDUP_M, ghosts=False):
+    """One row per frame of `match.frames`: ball, its source, and the team features.
+
+    ghosts: keep a team present at its opponent's position while one of its players is merged
+    into that opponent by the tracker (ghost.py), so a duel stays contested. Off: on the degraded
+    idsse train games, which reproduce the competition's merges, merges cost the decoder nothing
+    (0.542 with them, 0.541 without), and the ghost lost 0.001-0.006 spellF1.
+    """
     frames = match.frames.sort_values("frame", ignore_index=True)
+    players = match.players
+    ghost = None
+    if ghosts:
+        ghost = ghost_rows(players, frames, match.pitch, match.fps)
+        players = pd.concat([players, ghost], ignore_index=True) if len(ghost) else players
     ball, src, _ = clean_ball(frames, match.fps, match.pitch)
     index = pd.Index(frames["frame"])
     out = {"frame": frames["frame"].to_numpy(), "period": frames["period"].to_numpy(),
            "ball_x": ball[:, 0], "ball_y": ball[:, 1], "ball_src": src}
     for t in TEAMS:
-        pos = deduplicate(dense_positions(match.players, index, t, match.pitch), dedup_m)
+        pos = deduplicate(dense_positions(players, index, t, match.pitch), dedup_m)
         near, counts = ball_relative(pos, ball, radii)
         out["n_" + t] = np.sum(~np.isnan(pos[:, :, 0]), axis=1).astype(np.int16)
         out["near_" + t] = near
@@ -120,6 +136,14 @@ def team_features(match, radii=RADII, dedup_m=DEDUP_M):
             out["cx_" + t] = np.nanmean(pos[:, :, 0], axis=1)
             out["cy_" + t] = np.nanmean(pos[:, :, 1], axis=1)
     out["speed_med"] = median_player_speed(match.players, index, match.fps, match.pitch)
+    out["touch_H"], out["touch_A"] = touch_columns(ball, out["near_H"], out["near_A"], match.fps,
+                                                   out["period"])
+    out["features_version"] = np.full(len(frames), FEATURES_VERSION, dtype=np.int8)
+    for t in TEAMS:   # 1 where the team is present only as a ghost at this frame
+        out["ghost_" + t] = np.zeros(len(frames), dtype=np.int8)
+        if ghost is not None and len(ghost):
+            rows = index.get_indexer(ghost.loc[ghost["team"] == t, "frame"])
+            out["ghost_" + t][rows[rows >= 0]] = 1
     table = pd.DataFrame(out)
     float_cols = [c for c in table.columns if table[c].dtype == np.float64]
     table[float_cols] = table[float_cols].astype(np.float32)

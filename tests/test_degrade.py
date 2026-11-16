@@ -66,3 +66,21 @@ def test_line_weights_move_gap_starts_towards_lines():
         return np.mean(line[s - 1] < 3)
 
     assert near_share(weighted) > near_share(plain) + 0.1
+
+
+def test_drift_is_smooth_with_the_asked_size():
+    from jaicodyn.data.degrade import drift
+    e = drift(100000, 0.6, 2.0, FPS, np.random.default_rng(0), np.repeat([1, 2], 50000))
+    assert 0.5 < e.std() < 0.7
+    speed = np.hypot(*np.diff(e, axis=0).T) * FPS
+    assert np.median(speed) < 0.3    # a still ball stays still
+
+
+def test_ball_the_source_already_lacks_counts_towards_the_targets():
+    labels, period = match_labels()
+    already = labels == "D"                     # a source that blanks every dead frame
+    mask = hide_mask(labels, period, FPS, 0, 0.4, 3, LENGTHS, already=already)
+    plain = hide_mask(labels, period, FPS, 0, 0.4, 3, LENGTHS)
+    live = np.isin(labels, ["H", "A"])
+    assert np.isclose(mask[live].mean(), plain[live].mean(), atol=0.05)   # live rate unchanged
+    assert (mask & already).sum() < (plain & (labels == "D")).sum()        # dead not hidden again

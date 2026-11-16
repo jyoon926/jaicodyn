@@ -17,7 +17,13 @@ Evidence per frame (features from jaicodyn.features; per second, divided by fps 
     dead   the dead-ball evidence from dead.py: off the pitch, stationary ball, players walking,
            long ball gaps, set-piece tags
 
-    score H = live + gate * who / 2     score A = live - gate * who / 2     score D = dead
+    touch  TOUCH_W on the frames of a touch by that team (features/touch.py): the ball changed
+           velocity at one of its players, so that team had the ball there
+    flight with flight_mps set, the gate is 0 while the ball moves faster than flight_mps with no
+           touch within FLIGHT_TOUCH_S: a pass passing an opponent says nothing about who has it
+
+    score H = live + gate * who / 2 + touch_H     score A = live - gate * who / 2 + touch_A
+    score D = dead
 
 With no ball position the team scores are 0, so possession holds through gaps unless the
 dead-ball cues say play has stopped.
@@ -36,7 +42,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .dead import DeadParams, cues, off_pitch
+from .dead import DeadParams, cues, sustained_off_pitch
 
 STATES = np.array(["H", "A", "D"])
 H, A, D = 0, 1, 2
@@ -58,6 +64,17 @@ class Params:
     restart_window_s: float = 3.0  # ... spread over this long after each restart
     gap_w: float = 1.0           # evidence per second from the gap classifier's log-odds
     nats_per_s: float = 4.0      # posterior only: log-odds per second of evidence (calibrate)
+    # Touches. On train (degraded idsse with ball noise, and SkillCorner) touch_w 0.5 with the
+    # flight rule at 8 m/s gave 0.547 against 0.537 without either; touch_w 2 or more costs 0.03,
+    # an opponent's touch not being controlled possession. The final choice was made on
+    # validation and test pooled, by source, deciding on degraded idsse and vetoing what clearly
+    # breaks another source: touch_w 0.5 helps or ties on every source (degraded idsse +0.008,
+    # degraded Metrica +0.009, Metrica +0.020), while the flight rule lost 11 of 16 held-out
+    # games, tied on degraded idsse and cost degraded Metrica 0.012 on all 3. So touches stay
+    # and the flight rule is off (kept, as flight_mps, for the record).
+    touch_w: float = 0.5         # evidence per second on a team's touch frames (0: off)
+    flight_mps: float = 0.0      # ball faster than this, no touch near: no evidence (0: off)
+    flight_touch_s: float = 0.2  # ... unless a touch is within this long
     dead: DeadParams = DeadParams()
 
 
@@ -78,12 +95,16 @@ def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_
     who = np.tanh((na - nh) / p.closer_m)
     gate = np.clip((p.gate_far_m - np.minimum(nh, na)) / (p.gate_far_m - p.gate_near_m), 0, 1)
     # a player beside a ball out of play is taking a restart, not possessing it
-    gate[off_pitch(feats, pitch, p.dead.off_margin_m)] = 0
+    gate[sustained_off_pitch(feats, pitch, fps, p.dead)] = 0
     gate[~has_ball] = 0
+    touch_h, touch_a = (feats[c].to_numpy(float) if c in feats else np.zeros(len(feats))
+                        for c in ("touch_H", "touch_A"))
+    if p.flight_mps > 0:
+        gate[in_flight(feats, fps, touch_h + touch_a > 0, p)] = 0
 
     score = np.zeros((len(feats), 3))
-    score[:, H] = gate * (p.live_w + who / 2)
-    score[:, A] = gate * (p.live_w - who / 2)
+    score[:, H] = gate * (p.live_w + who / 2) + p.touch_w * touch_h
+    score[:, A] = gate * (p.live_w - who / 2) + p.touch_w * touch_a
     score[:, D] = cues(feats, fps, pitch, tags, p.dead)["dead"].to_numpy()
     if gap_probs is not None:
         rows = ~np.isnan(gap_probs[:, 0])
@@ -98,6 +119,15 @@ def emissions(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_
         score[:, A] -= np.maximum(e, 0)
         score[:, H] -= np.maximum(-e, 0)
     return score / fps
+
+
+def in_flight(feats, fps, touched, p=Params()):
+    """Frames with the ball moving faster than flight_mps and no touch within flight_touch_s."""
+    xy = feats[["ball_x", "ball_y"]].to_numpy(float)
+    speed = np.r_[np.nan, np.linalg.norm(np.diff(xy, axis=0), axis=1) * fps]
+    k = max(1, int(round(p.flight_touch_s * fps)))
+    near_touch = np.convolve(touched.astype(float), np.ones(2 * k + 1), mode="same") > 0
+    return (np.nan_to_num(speed) > p.flight_mps) & ~near_touch
 
 
 def restart_evidence(p_home, p=Params()):

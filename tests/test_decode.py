@@ -178,3 +178,30 @@ def test_phase_evidence_only_in_gaps_and_only_between_teams():
 def test_no_tags_no_phase_evidence():
     from jaicodyn.decode.tags import phase_team_evidence
     assert phase_team_evidence(feats(np.full(10, 0.5), np.full(10, 3.0)), None) is None
+
+
+def test_brief_off_pitch_exit_that_comes_back_is_ignored():
+    from jaicodyn.decode.dead import sustained_off_pitch
+    x = rolling(300)
+    x[100:110] = -5.0            # 0.4 s outside, then straight back: noise
+    x[200:240] = -5.0            # 1.6 s outside: a real exit
+    f = feats(np.full(300, 0.5), np.full(300, 3.0), x)
+    off = sustained_off_pitch(f, PITCH, FPS)
+    assert not off[100:110].any() and off[200:240].all()
+    x2 = x.copy()
+    x2[110:130] = np.nan          # brief exit, then the ball is lost: still counts
+    off2 = sustained_off_pitch(feats(np.full(300, 0.5), np.full(300, 3.0), x2), PITCH, FPS)
+    assert off2[100:110].all()
+
+
+def test_fast_pass_past_an_opponent_does_not_count_for_them():
+    from dataclasses import replace
+    n = 300
+    x = np.r_[rolling(100), 58 + np.arange(30) * 0.6, 76 + np.arange(170) * 0.08]   # 15 m/s pass
+    near_a = np.r_[np.full(100, 3.0), np.full(30, 0.8), np.full(170, 3.0)]       # passes A player
+    near_h = np.r_[np.full(100, 0.5), np.full(30, 2.0), np.full(170, 0.5)]
+    f = feats(near_h, near_a, x)
+    off = replace(Params(), flight_mps=0.0, touch_w=0.0, turnover_s=0.2)
+    on = replace(off, flight_mps=8.0)
+    assert "A" in set(decode(f, FPS, PITCH, p=off))
+    assert set(decode(f, FPS, PITCH, p=on)) == {"H"}

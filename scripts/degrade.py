@@ -1,13 +1,17 @@
-"""Build idsse_degraded: idsse games with the ball hidden to look like the competition tracking.
+"""Build idsse_degraded and metrica_degraded: games made to look like the competition tracking.
 
     python -m scripts.degrade --measure     # measure the settings into config/degrade.json
-    python -m scripts.degrade               # build data/processed/idsse_degraded/*, and report
+    python -m scripts.degrade --measure-noise   # only the ball-position noise (D below)
+    python -m scripts.degrade               # build data/processed/{idsse,metrica}_degraded/*
 
 --measure reads the competition match's own tracking and automatic tags, no labels:
     missing, gap_lengths_s  how much of the ball track is missing, in how long gaps
     dead_ratio              how much likelier the ball is missing while dead (A below); the tags
                             give a lower bound to check it against (B)
     line_weights            how much likelier a gap starts near or beyond a line (C)
+    ball_noise_*            the slow error on the ball position (D): fitted so the idsse train
+                            games, with it added, put the moving ball as far from its nearest
+                            player as the competition match does
 SkillCorner's own ratio (11x) is recorded but not used: its TV feed cuts to replays during
 stoppages, which the competition's wide shot does not. See jaicodyn/data/degrade.py.
 """
@@ -19,11 +23,12 @@ import numpy as np
 import pandas as pd
 
 from jaicodyn.data import available, load, paths
-from jaicodyn.data.degrade import CONFIG, degrade, settings
+from jaicodyn.data.degrade import CONFIG, degrade, drift, settings
 from jaicodyn.data.match import write
-from jaicodyn.data.sources import idsse_degraded
+from jaicodyn.data.sources import SOURCES
 from jaicodyn.features import build
 from jaicodyn.features.ball import true_runs
+from jaicodyn.features.team import dense_positions
 from scripts.build_features import resolve
 
 
@@ -110,6 +115,128 @@ def skillcorner_ratio():
     return np.mean(dead) / np.mean(live)
 
 
+def merge_settings(comp):
+    """(merges per second of a player being within 1.5 m of an opponent, merge lengths in s)."""
+    from jaicodyn.data.degrade import close_rows
+    from jaicodyn.features.ghost import merges
+    frames = comp.frames.sort_values("frame")
+    players = comp.players[comp.players["frame"].isin(frames["frame"])]
+    events = merges(players, frames, comp.pitch, comp.fps)
+    close_seconds = len(close_rows(players, comp.pitch)) / comp.fps
+    lengths = np.sort([(end - start) / comp.fps for _, _, start, end, _ in events])
+    return len(events) / close_seconds, lengths, len(events)
+
+
+NOISE_BANDS = [(1, 3), (3, 6)]   # m/s: ball rolling at a player's feet or passed along the ground
+NOISE_QS = (10, 25, 50)
+NOISE_SIGMA_M = np.round(np.arange(0.3, 0.95, 0.05), 2)
+NOISE_TAU_S = (0.25, 0.5, 1, 2, 4, 8)   # Gaussian smoothing width, s
+ROUGH_LAGS = (1, 4, 8, 32)
+ROUGH_SLACK = 0.02  # see noise_settings
+
+
+def ball_and_players(match, live_only):
+    """(ball [n,2] m, every player [n,k,2] m, frames to use) for the noise fit."""
+    length, width = match.pitch
+    f = match.frames.sort_values("frame", ignore_index=True)
+    index = pd.Index(f["frame"])
+    pos = np.concatenate([dense_positions(match.players, index, t, match.pitch) for t in "HA"],
+                         axis=1)
+    ball = np.column_stack([f["ball_x"].to_numpy(float) * length,
+                            f["ball_y"].to_numpy(float) * width])
+    use = np.isin(f["label"].to_numpy(), ["H", "A"]) if live_only else np.ones(len(f), bool)
+    return ball, pos, use, f["period"].to_numpy()
+
+
+def nearest_quantiles(ball, pos, use, fps):
+    """NOISE_QS quantiles of the nearest player's distance, per ball-speed band in NOISE_BANDS.
+
+    Ball speed is a 5-frame median of the frame-to-frame speed, taken on the noisy ball: it is
+    what the competition match gives too.
+    """
+    v = np.r_[np.nan, np.hypot(*np.diff(ball, axis=0).T) * fps]
+    v = pd.Series(v).rolling(5, center=True, min_periods=3).median().to_numpy()
+    d = np.linalg.norm(pos - ball[:, None], axis=2)
+    near = np.min(np.where(np.isnan(d), np.inf, d), axis=1)
+    out = []
+    for lo, hi in NOISE_BANDS:
+        sel = use & (v >= lo) & (v < hi) & np.isfinite(near)
+        out += list(np.percentile(near[sel], NOISE_QS))
+    return np.array(out)
+
+
+def roughness(ball, use):
+    """Mean |second difference| of the ball, metres, at ROUGH_LAGS frames."""
+    out = []
+    for k in ROUGH_LAGS:
+        d = ball[2 * k:] - 2 * ball[k:-k] + ball[:-2 * k]
+        ok = use[2 * k:] & use[:-2 * k] & use[k:-k]
+        out.append(float(np.nanmean(np.abs(d[ok]))))
+    return np.array(out)
+
+
+def noise_settings(comp):
+    """D: (sigma_m, tau_s, competition quantiles, clean idsse, fitted idsse).
+
+    Competition: every visible frame (no labels; the moving-ball bands leave out most dead ball).
+    idsse train: live frames, with drift(sigma, tau) added to the ball, the same noise draw for
+    every setting. For each tau the sigma with the least squared quantile error is found, and of
+    the taus whose noise leaves the ball's roughness within ROUGH_SLACK of clean idsse at every
+    lag, the best fit is kept: the competition's ball track is no rougher than idsse's at any lag
+    up to 1.3 s, so the noise must not add roughness. sigma comes out 0.55-0.6 m at every tau; the
+    roughness rule rules out tau under 1 s, and the fit is flat above it.
+    """
+    target = nearest_quantiles(*ball_and_players(comp, False)[:3], comp.fps)
+    train = json.loads(paths.SPLITS.read_text("utf-8"))["splits"]["train"]["idsse"]
+    games = [ball_and_players(load("idsse/{}".format(i)), True) for i in train]
+    clean = np.mean([nearest_quantiles(b, p, u, 25) for b, p, u, _ in games], axis=0)
+    smooth = np.mean([roughness(b, u) for b, _, u, _ in games], axis=0)
+    best = None   # (loss, sigma, tau, quantiles)
+    for tau in NOISE_TAU_S:
+        unit = [drift(len(b), 1.0, tau, 25, np.random.default_rng(k), period)
+                for k, (b, _, _, period) in enumerate(games)]
+        fit = None
+        for sigma in NOISE_SIGMA_M:
+            got = np.mean([nearest_quantiles(b + sigma * e, p, u, 25)
+                           for (b, p, u, _), e in zip(games, unit)], axis=0)
+            loss = float(np.sum((got - target) ** 2))
+            if fit is None or loss < fit[0]:
+                fit = (loss, float(sigma), tau, got)
+        rough = np.mean([roughness(b + fit[1] * e, u) for (b, _, u, _), e in zip(games, unit)],
+                        axis=0)
+        if np.all(rough <= smooth * (1 + ROUGH_SLACK)) and (best is None or fit[0] < best[0]):
+            best = fit
+    _, sigma, tau, got = best
+    unit = [drift(len(b), sigma, tau, 25, np.random.default_rng(k), period)
+            for k, (b, _, _, period) in enumerate(games)]
+    rough = {"lags_frames": list(ROUGH_LAGS),
+             "competition": roughness(*ball_and_players(comp, False)[::2]),
+             "idsse_clean": np.mean([roughness(b, u) for b, _, u, _ in games], axis=0),
+             "idsse_with_noise": np.mean([roughness(b + e, u)
+                                          for (b, _, u, _), e in zip(games, unit)], axis=0)}
+    return sigma, tau, target, clean, got, rough
+
+
+def measure_noise(config):
+    """Fill config's ball_noise_* (D) from the competition match; returns config."""
+    sigma, tau, target, clean, fitted, rough = noise_settings(load(resolve("BAR-ATH")))
+    config["ball_noise_sigma_m"] = sigma
+    config["ball_noise_tau_s"] = tau
+    r = lambda a: [round(float(v), 3) for v in a]  # noqa: E731
+    config.setdefault("checks", {})["ball_noise_nearest_m"] = {
+        "bands_mps": NOISE_BANDS, "quantiles": list(NOISE_QS),
+        "competition": r(target), "idsse_clean": r(clean), "idsse_with_noise": r(fitted)}
+    config["checks"]["ball_noise_roughness_m"] = {
+        k: (v if k == "lags_frames" else r(v)) for k, v in rough.items()}
+    print("ball noise: sigma {:.2f} m per axis, tau {} s. Nearest player (m), q{} per band {}:\n"
+          "  competition {}\n  idsse clean {}\n  idsse noisy {}".format(
+              sigma, tau, list(NOISE_QS), NOISE_BANDS, r(target), r(clean), r(fitted)))
+    print("  ball roughness, mean |2nd difference| (m) at lags {}: competition {}, idsse clean {}, "
+          "noisy {}".format(list(ROUGH_LAGS), r(rough["competition"]), r(rough["idsse_clean"]),
+                            r(rough["idsse_with_noise"])))
+    return config
+
+
 def measure():
     comp = load(resolve("BAR-ATH"))
     feats = build(comp)
@@ -134,6 +261,12 @@ def measure():
                    "train labels. SkillCorner's ratio is TV replays, so it is not used.",
     }
     config["line_weights_applied"] = calibrate(config)
+    measure_noise(config)
+    hazard, lengths, n = merge_settings(comp)
+    config["merge_hazard_per_s"] = round(float(hazard), 4)
+    config["merge_lengths_s"] = [round(float(v), 2) for v in lengths]
+    print("cross-team merges: {} on the competition match, {:.3f} per second of a player within "
+          "1.5 m of an opponent, median length {:.1f}s".format(n, hazard, np.median(lengths)))
     CONFIG.write_text(json.dumps(config, indent=1) + "\n", "utf-8")
     print("wrote {}: missing {:.1%}, dead_ratio {:.2f} (tags lower bound {:.2f}, SkillCorner "
           "{:.1f} not used), line weights {}, {} gap lengths (median {:.1f}s)".format(
@@ -199,14 +332,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--measure", action="store_true", help="measure into config/degrade.json")
+    parser.add_argument("--measure-noise", action="store_true",
+                        help="measure only the ball-position noise into config/degrade.json")
     args = parser.parse_args()
+    if args.measure_noise:
+        config = measure_noise(settings())
+        CONFIG.write_text(json.dumps(config, indent=1) + "\n", "utf-8")
+        print("wrote {}".format(CONFIG))
+        return
     if args.measure:
         measure()
         return
     c = settings()
-    for match in [m for m in available() if m.source == "idsse"]:
-        write("idsse_degraded", match.id, idsse_degraded.read(match.id))
-        report(load("idsse_degraded/{}".format(match.id)), c)
+    for match in [m for m in available() if m.source in ("idsse", "metrica")]:
+        target = match.source + "_degraded"
+        write(target, match.id, SOURCES[target].read(match.id))
+        report(load("{}/{}".format(target, match.id)), c)
 
 
 if __name__ == "__main__":

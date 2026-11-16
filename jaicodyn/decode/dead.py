@@ -2,7 +2,8 @@
 
 Positive means the ball is out of play. Each cue is a physical observation about a stoppage:
 
-    off       ball beyond the lines                                 +OFF_W
+    off       ball beyond the lines, ignoring brief exits that come    +OFF_W
+              straight back (sustained_off_pitch)
     still     ball visible and not moving for a second              +STILL_W
     moving    ball visible and moving at pass speed                 -MOVING_W
     slow      players walking together, relative to the match's own median speed:
@@ -32,6 +33,7 @@ from ..features.ball import true_runs
 class DeadParams:
     off_w: float = 2.0
     off_margin_m: float = 1.0
+    off_min_s: float = 1.0       # an exit this short that comes straight back is tracker noise
     still_w: float = 2.0         # tuned: x2 won 5/5 train games at every ratio, confirmed on validation
     still_mps: float = 0.3
     moving_w: float = 0.5
@@ -89,6 +91,26 @@ def tag_mask(feats, tags, fps, pre_s, post_s):
     return mask
 
 
+def sustained_off_pitch(feats, pitch, fps, p=DeadParams()):
+    """Off the pitch, ignoring brief exits that come straight back.
+
+    A run of off-pitch frames no longer than off_min_s that is followed directly by the ball seen
+    back on the pitch is treated as tracker noise near the line: on the competition match 19 of 56
+    exits are like that, and on the clean idsse train games every such exit (5 of 5) is live play,
+    while every longer one (70) is dead. Exits that last longer, or end with the ball out of sight,
+    still count.
+    """
+    off = off_pitch(feats, pitch, p.off_margin_m)
+    x = feats["ball_x"].to_numpy(float)
+    limit = p.off_min_s * fps
+    for start, n in zip(*true_runs(off)):
+        end = start + n
+        comes_back = end < len(x) and not np.isnan(x[end]) and not off[end]
+        if n <= limit and comes_back:
+            off[start:end] = False
+    return off
+
+
 def cues(feats, fps, pitch, tags=None, p=DeadParams()):
     """Table of each cue's evidence per second, and their sum in `dead`."""
     n_smooth = p.smooth_s * fps
@@ -99,7 +121,7 @@ def cues(feats, fps, pitch, tags=None, p=DeadParams()):
                                          ).median().to_numpy()
     seen = visible & ~np.isnan(ball_speed)
 
-    off = off_pitch(feats, pitch, p.off_margin_m)
+    off = sustained_off_pitch(feats, pitch, fps, p)
     speed = feats["speed_med"].to_numpy(float)
     ratio = _rolling(speed, n_smooth) / np.nanmedian(speed)
     with np.errstate(divide="ignore", invalid="ignore"):  # everyone still: ratio 0, clipped

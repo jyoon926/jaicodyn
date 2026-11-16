@@ -1,5 +1,5 @@
 {
-  "notes": "idsse_degraded is idsse with the ball hidden like the competition tracking (scripts/degrade.py), same matches and splits. Split by match. SkillCorner is split by date, so validation and test come after training. Choose every threshold on train and validation; run test once, after freezing.",
+  "notes": "idsse_degraded and metrica_degraded are those games degraded like the competition tracking (scripts/degrade.py), same matches and splits. Split by match. SkillCorner is split by date, so validation and test come after training. Choose every threshold on train and validation; run test once, after freezing.",
   "splits": {
     "train": {
       "idsse": ["J03WN1", "J03WOH", "J03WOY", "J03WPY", "J03WQQ"],
@@ -14,6 +14,7 @@
     },
     "test": {
       "metrica": ["game1", "game2", "game3"],
+      "metrica_degraded": ["game1", "game2", "game3"],
       "skillcorner": ["2015213", "2016236", "2017461"]
     }
   }

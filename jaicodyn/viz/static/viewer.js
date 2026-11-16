@@ -22,7 +22,7 @@ const OVERVIEW = 30;
 
 const state = {
   info: null, frame: 0, playing: false, rate: 1, chunks: new Map(), pending: new Set(),
-  range: [0, 1], span: 1500, view: [0, 0], viewFrame: null, scrubbing: false, showVideo: false, seeking: null, followed: null,
+  range: [0, 1], span: 1500, view: [0, 0], viewFrame: null, scrubbing: false, showVideo: false, showOverlay: true, seeking: null, followed: null,
   layers: Object.fromEntries(Object.entries(LAYERS).map(([k, v]) => [k, v[1]])),
 };
 
@@ -413,7 +413,7 @@ function drawMain(data) {
     projectMain = pitchProjector(canvas, 36);
     drawSurface(context, projectMain);
   }
-  if (data) drawScene(context, projectMain, data, state.frame, false);
+  if (data && state.showOverlay) drawScene(context, projectMain, data, state.frame, false);
 }
 
 function drawMini(data) {
@@ -853,6 +853,12 @@ function swapView() {
   if (hasVideo()) showView(!state.showVideo);
 }
 
+function toggleOverlay() {
+  state.showOverlay = !state.showOverlay;
+  $("overlayToggle").setAttribute("aria-pressed", state.showOverlay);
+  draw();
+}
+
 document.addEventListener("keydown", (event) => {
   if (!state.info || $("shortcuts").open) return;
   if (event.target.tagName === "INPUT" && event.target.type !== "checkbox") return;
@@ -863,7 +869,7 @@ document.addEventListener("keydown", (event) => {
     " ": () => setPlaying(!state.playing),
     ArrowLeft: () => step(-jump), ArrowRight: () => step(jump),
     "[": () => jumpPossession(-1), "]": () => jumpPossession(1),
-    "-": () => setRate(-1), "=": () => setRate(1), v: swapView, "?": () => $("shortcuts").showModal(),
+    "-": () => setRate(-1), "=": () => setRate(1), v: swapView, o: toggleOverlay, "?": () => $("shortcuts").showModal(),
   };
   if (actions[event.key]) {
     event.preventDefault();
@@ -960,6 +966,7 @@ const buttons = {
   nextPossession: () => jumpPossession(1),
   viewVideo: () => { if (hasVideo()) showView(true); },
   viewPitch: () => showView(false),
+  overlayToggle: toggleOverlay,
 };
 for (const [id, action] of Object.entries(buttons)) {
   $(id).addEventListener("click", (event) => { if (state.info) action(); event.currentTarget.blur(); });

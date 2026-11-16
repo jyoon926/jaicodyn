@@ -70,12 +70,20 @@ PHASES = {  # code: (flip, estimated accuracy as the possessing team)
     "PLAYERS IN THE BOX": (False, 0.60),   # agreement 0.570
 }
 
+# Shipped decision: every code in PHASES at half strength (scale 0.5). On the synthetic-tag sweep
+# over the degraded idsse train games (python -m scripts.synthetic_tags), all codes cost at most
+# about 0.001 in the worst world (tags ~0.6 accurate) against roughly double the mean gain of the
+# more conservative sources when tags are ~0.75 accurate or better. Real tag accuracy on the
+# competition match can't be measured without its labels, so this is a judgement on that trade,
+# checked once on validation.
+PHASE_SCALE = 0.5
+
 
 def _logit(p):
     return np.log(p / (1 - p))
 
 
-def phase_team_evidence(feats, tags, phases=PHASES, scale=1.0):
+def phase_team_evidence(feats, tags, phases=PHASES, scale=PHASE_SCALE):
     """Per-second evidence for home (+) or away (-) from phase tags, on frames without a ball.
 
     Where tags overlap, the most reliable one speaks (they are nested and correlated, so summing

@@ -16,9 +16,11 @@ copied from the competition's real tags. Two kinds of settings:
 
 Each feasible realism combination is one world. Each decision is scored in every world: the gain
 in strict spellF1 over the decoder without tags, averaged over the games. The chosen decision is
-the one with the best worst-case gain over the worlds (robust, not best in one world).
+the one with the best worst-case gain over the worlds (robust, not best in one world). The shipped
+decision is SHIPPED (all codes, scale 0.5; see PHASE_SCALE in jaicodyn/decode/tags.py), which trades
+a slightly worse worst case for a larger mean gain.
 
-Validation bar (fixed before reading): in the validation games, the chosen decision's mean gain
+Validation bar (fixed before reading): in the validation games, the shipped decision's mean gain
 over the worlds is at least 0, and its worst world loses no more than 0.01.
 """
 
@@ -31,7 +33,7 @@ from jaicodyn.data import load, paths
 from jaicodyn.data.labels import target_labels
 from jaicodyn.decode import decode
 from jaicodyn.decode import synthetic_tags as st
-from jaicodyn.decode.tags import PHASES, phase_team_evidence
+from jaicodyn.decode.tags import PHASE_SCALE, PHASES, phase_team_evidence
 from jaicodyn.features import build
 from scripts.decode import score
 
@@ -44,6 +46,7 @@ SOURCES = {"all": dict(PHASES),
            "no box codes": {k: v for k, v in PHASES.items() if k not in BOX},
            "build up + progression": {k: v for k, v in PHASES.items() if k in STRONG}}
 SCALES = [0.5, 1.0, 2.0]
+SHIPPED = ("all", PHASE_SCALE)          # what scripts/decode.py uses
 
 
 def game(match_id):
@@ -132,13 +135,14 @@ def main():
                                                          int(np.sum(v > 1e-9)), len(v)))
     choice = max(summary, key=summary.get)
     print("\nmost robust: {} x{:g} (worst-case gain {:+.3f})".format(*choice, summary[choice]))
+    print("shipped:     {} x{:g} (worst-case gain {:+.3f})".format(*SHIPPED, summary[SHIPPED]))
 
     if args.validate:
         val = [game(i) for i in splits["validation"]["idsse_degraded"]]
         vw = worlds(val)
-        v = np.array([gains(val, w, [choice])[0][choice] for w in vw])
+        v = np.array([gains(val, w, [SHIPPED])[0][SHIPPED] for w in vw])
         ok = v.mean() >= 0 and v.min() >= -0.01
-        print("\nvalidation, read once ({} worlds): mean gain {:+.3f}, worst {:+.3f}, best {:+.3f}"
+        print("\nvalidation, read once, shipped decision ({} worlds): mean gain {:+.3f}, worst {:+.3f}, best {:+.3f}"
               " -> bar {}".format(len(vw), v.mean(), v.min(), v.max(),
                                   "passed" if ok else "FAILED"))
 
