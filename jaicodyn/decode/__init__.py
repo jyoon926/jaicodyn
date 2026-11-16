@@ -50,7 +50,9 @@ H, A, D = 0, 1, 2
 
 @dataclass(frozen=True)
 class Params:
-    closer_m: float = 1.0        # nearest-player margin that counts as clearly nearer
+    closer_m: float = 1.0        # nearest-player margin that counts as clearly nearer for the main
+                                 # Viterbi decoder
+    anchor_closer_m: float = 3.0  # clear-control margin required before an anchor rule locks possession
     gate_near_m: float = 1.5     # someone this close to the ball: full evidence
     gate_far_m: float = 2.5      # nobody this close: no evidence. Tuned on train (was 4.0):
                                  # +0.014-0.017 on degraded idsse at every missing-ball ratio
@@ -231,25 +233,42 @@ def _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home, team_evidenc
 
 
 def decode(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_p_home=None,
-           team_evidence=None):
+           team_evidence=None, anchor_rules=False):
     """H/A/D label per row of a features table, each period decoded on its own.
+
+    By default this uses the Viterbi decoder. Set `anchor_rules=True` to opt into the
+    hardcoded deterministic anchor rules in jaicodyn.decode.anchors for review or comparison.
 
     restart_p_home: optional P(home restarts) per row, read at each restart and turned into
     evidence over the first restart_window_s after it (restart_evidence). Needs two passes: the
     first, without it, places the restarts.
     """
+    if anchor_rules:
+        return np.asarray(decode_anchor_rules(feats=feats, fps=fps, pitch=pitch, tags=tags,
+                                             p=p, gap_probs=gap_probs,
+                                             restart_p_home=restart_p_home,
+                                             team_evidence=team_evidence), dtype=object)
     windows = _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home, team_evidence)
     return _viterbi_periods(feats, emissions(feats, fps, pitch, tags, p, gap_probs, windows,
                                              team_evidence), switch_costs(p))
 
 
 def posterior(feats, fps, pitch, tags=None, p=Params(), gap_probs=None, restart_p_home=None,
-              team_evidence=None):
+              team_evidence=None, anchor_rules=False):
     """[n, 3] probability of H, A, D per row, each period on its own.
 
     Scores and costs are scaled by nats_per_s to read as log-odds. That scaling leaves the
     Viterbi path unchanged; it only sets how confident the probabilities are.
+
+    The anchor-rule mode is intentionally not probabilistic, so it returns a one-hot pseudo-
+    posterior that preserves the chosen state for each frame.
     """
+    if anchor_rules:
+        labels = np.asarray(decode_anchor_rules(feats, fps, pitch, p), dtype=object)
+        out = np.zeros((len(labels), 3))
+        for i, label in enumerate(labels):
+            out[i, H if label == "H" else A if label == "A" else D] = 1.0
+        return out
     windows = _windows(feats, fps, pitch, tags, p, gap_probs, restart_p_home, team_evidence)
     score = emissions(feats, fps, pitch, tags, p, gap_probs, windows, team_evidence) * p.nats_per_s
     cost = switch_costs(p) * p.nats_per_s
